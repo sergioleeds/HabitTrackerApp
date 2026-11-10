@@ -1,0 +1,47 @@
+name: Test and publish
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Engine.gs must match engine.js
+        run: cmp app/engine.js server/Engine.gs
+      - name: Unit tests
+        run: |
+          node tests/engine.test.js
+          node tests/engine_created.test.js
+          node tests/gas.test.js
+
+  deploy:
+    needs: test
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Stamp the service worker with this commit
+        run: sed -i "s/var BUILD = 'dev';/var BUILD = '${GITHUB_SHA::10}';/" app/sw.js
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: app
+      - id: deployment
+        uses: actions/deploy-pages@v4

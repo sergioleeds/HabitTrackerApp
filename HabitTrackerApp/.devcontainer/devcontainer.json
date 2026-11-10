@@ -1,0 +1,42 @@
+{
+  "name": "HabitTrackerApp · Claude Code (sandbox)",
+  "build": { "dockerfile": "Dockerfile" },
+
+  // Claude Code CLI dentro del contenedor (Dev Container Feature oficial de Anthropic).
+  "features": {
+    "ghcr.io/anthropics/devcontainer-features/claude-code:1.0": {}
+  },
+
+  // Usuario sin privilegios (necesario si algún día usas --dangerously-skip-permissions).
+  "remoteUser": "node",
+
+  // El contenedor solo ve ESTA carpeta (el repo). Nada más de tu disco.
+  "workspaceMount": "source=${localWorkspaceFolder},target=/workspace,type=bind,consistency=delegated",
+  "workspaceFolder": "/workspace",
+
+  "mounts": [
+    // Login y ajustes de Claude: volumen de Docker propio, no tu ~/.claude del ordenador.
+    "source=claude-code-config-${devcontainerId},target=/home/node/.claude,type=volume"
+  ],
+
+  "containerEnv": {
+    "CLAUDE_CONFIG_DIR": "/home/node/.claude",
+    "TZ": "Europe/Madrid"
+  },
+
+  // Necesario para el cortafuegos de salida (iptables/ipset). Sin esto el script falla.
+  "runArgs": ["--cap-add=NET_ADMIN", "--cap-add=NET_RAW"],
+
+  // Cada vez que arranca el contenedor se cierra la red salvo la lista permitida.
+  "postStartCommand": "sudo /usr/local/bin/init-firewall.sh",
+  "waitFor": "postStartCommand",
+
+  "customizations": {
+    "vscode": {
+      "extensions": ["anthropic.claude-code"],
+      "settings": {
+        "terminal.integrated.defaultProfile.linux": "bash"
+      }
+    }
+  }
+}
