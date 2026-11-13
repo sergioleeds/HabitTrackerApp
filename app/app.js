@@ -632,25 +632,34 @@
 
     // account / sync
     var statusLine = h('div', { class: 'syncstatus ' + info.status, id: 'syncline', text: syncText(info, true) });
+    var lastErrLine = h('div', { class: 'synclast', id: 'synclast', text: lastErrorText(info), hidden: !info.lastError });
+    var testLine = h('div', { class: 'testline ' + testClass(), id: 'testline', role: 'status', text: testText(), hidden: !lastTest });
     var syncCard = h('div', { class: 'card pad' }, h('h3', { text: t('sync') }), h('p', { class: 'help', text: t('syncHelp') }));
     if (S.hasSync()) {
       syncCard.appendChild(h('div', { class: 'connected' }, h('i', { class: 'dot ok' }), h('strong', { text: t('connected') })));
       syncCard.appendChild(statusLine);
+      syncCard.appendChild(lastErrLine);
       syncCard.appendChild(h('p', { class: 'help', text: t('addDeviceHelp') }));
       syncCard.appendChild(h('div', { class: 'btnrow' },
         h('button', { class: 'btn primary', text: t('copyLink'), onclick: function () { copyText(connectLink(), t('linkCopied')); } }),
         h('button', { class: 'btn', text: t('copyCode'), onclick: function () { copyText(connectCode(), t('codeCopied')); } }),
-        h('button', { class: 'btn', text: t('syncNow'), onclick: function () { S.sync().then(function (r) { toast(r.status === 'ok' ? t('syncOk') : r.status === 'offline' ? t('offlineToast') : t('syncFail')); }); } }),
+        h('button', { class: 'btn', text: t('syncNow'), onclick: function () { S.sync().then(function (r) { toast(syncToast(r)); }); } }),
+        h('button', { class: 'btn', id: 'testbtn', text: t('testConn'), onclick: function (e) {
+          var b = e.currentTarget; b.disabled = true;
+          lastTest = { result: 'testing' }; paintTest();
+          S.testConnection().then(function (r) { lastTest = r; b.disabled = false; paintTest(); });
+        } }),
         h('button', { class: 'btn danger', text: t('signOut'), onclick: function () {
-          if (confirm(t('signOutConfirm'))) S.configureSync('', '').then(function () { toast(t('signedOut')); render(); });
+          if (confirm(t('signOutConfirm'))) { lastTest = null; S.configureSync('', '').then(function () { toast(t('signedOut')); render(); }); }
         } })));
+      syncCard.appendChild(testLine);
     } else {
       var codeIn = h('input', { class: 'inp', id: 'f-code', type: 'text', placeholder: t('codePlaceholder'), autocomplete: 'off', autocapitalize: 'off', spellcheck: 'false' });
       syncCard.appendChild(h('div', { class: 'field' }, h('label', { for: 'f-code', text: t('codeLabel') }), codeIn, h('div', { class: 'help', text: t('codeHelp') })));
       syncCard.appendChild(h('div', { class: 'btnrow' }, h('button', { class: 'btn primary', text: t('connect'), onclick: function () {
         var o = parseConnect(codeIn.value);
         if (!o) { toast(t('badCode')); return; }
-        S.configureSync(o.u, o.k).then(function (r) { toast(r.status === 'ok' ? t('syncOk') : t('syncFail')); render(); });
+        S.configureSync(o.u, o.k).then(function (r) { toast(syncToast(r)); render(); });
       } })));
       var urlIn = h('input', { class: 'inp', id: 'f-url', type: 'url', placeholder: 'https://script.google.com/macros/s/…/exec', autocomplete: 'off', autocapitalize: 'off', spellcheck: 'false' });
       var tokIn = h('input', { class: 'inp', id: 'f-tok', type: 'password', autocomplete: 'off', autocapitalize: 'off', spellcheck: 'false' });
@@ -661,7 +670,7 @@
           var u = urlIn.value.trim(), k = tokIn.value.trim();
           if (!okUrl(u)) { toast(t('errUrl')); return; }
           if (!k) { toast(t('errToken')); return; }
-          S.configureSync(u, k).then(function (r) { toast(r.status === 'ok' ? t('syncOk') : t('syncFail')); render(); });
+          S.configureSync(u, k).then(function (r) { toast(syncToast(r)); render(); });
         } }))));
     }
     wrap.appendChild(syncCard);
@@ -718,9 +727,39 @@
     if (info.status === 'off') return t('syncOff');
     if (info.status === 'syncing') return t('syncing');
     if (info.status === 'offline') return p ? t('offlinePending', { n: p }) : t('offline');
-    if (info.status === 'error') return t('syncError') + (long && info.error ? ': ' + info.error : '');
+    if (info.status === 'error') return errText(info.code, info.error, long);
     if (p) return t('pending', { n: p });
     return t('synced') + (long && info.last ? ' · ' + new Intl.DateTimeFormat(locale, { hour: '2-digit', minute: '2-digit' }).format(new Date(info.last)) : '');
+  }
+  /** What went wrong, in words. Short for the pill; long adds the hint or the raw message. */
+  function errText(code, msg, long) {
+    if (code === 'unreachable') return t(long ? 'errUnreachableLong' : 'errUnreachable');
+    if (code === 'unauthorized') return t(long ? 'errUnauthorizedLong' : 'errUnauthorized');
+    if (code === 'tokenunset') return t('errTokenUnset');
+    if (code === 'http' || code === 'notjson') return t('errNotApp') + (long && msg ? ' (' + msg + ')' : '');
+    return t('syncError') + (long && msg ? ': ' + msg : '');
+  }
+  function syncToast(r) {
+    if (r.status === 'ok') return t('syncOk');
+    if (r.status === 'offline') return t('offlineToast');
+    if (r.status === 'busy') return t('syncing');
+    if (r.status === 'error' && r.code && r.code !== 'unknown' && r.code !== 'server') return errText(r.code, r.error, false);
+    return t('syncFail');
+  }
+  function lastErrorText(info) {
+    var e = info.lastError; if (!e) return '';
+    var when = new Intl.DateTimeFormat(locale, { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }).format(new Date(e.t));
+    return t('lastError', { when: when, what: errText(e.code, '', false) + (e.msg ? ' · ' + e.msg : '') });
+  }
+  // result of the last "Test connection" (kept so a re-render does not wipe it)
+  var lastTest = null;
+  var TEST_KEYS = { testing: 'testing', ok: 'testOk', offline: 'testOffline', nonet: 'testNoNet', unreachable: 'testUnreachable',
+    unauthorized: 'testBadKey', tokenunset: 'testTokenUnset', notapp: 'testNotApp', server: 'testServer' };
+  function testText() { return lastTest ? t(TEST_KEYS[lastTest.result] || 'testServer', { d: lastTest.detail || '' }) : ''; }
+  function testClass() { return !lastTest || lastTest.result === 'testing' ? '' : lastTest.result === 'ok' ? 'ok' : 'error'; }
+  function paintTest() {
+    var el = $('#testline'); if (!el) return;
+    el.textContent = testText(); el.className = 'testline ' + testClass(); el.hidden = !lastTest;
   }
   function updatePill() {
     var info = S.syncInfo(), pill = $('#pill');
@@ -729,6 +768,7 @@
     pill.className = 'pill ' + info.status + (info.pending ? ' pend' : '');
     $('#pilltext').textContent = syncText(info, false);
     var line = $('#syncline'); if (line) { line.textContent = syncText(info, true); line.className = 'syncstatus ' + info.status; }
+    var le = $('#synclast'); if (le) { le.textContent = lastErrorText(info); le.hidden = !info.lastError; }
   }
 
   // ---------- shell ----------

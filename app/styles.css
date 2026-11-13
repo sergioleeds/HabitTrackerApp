@@ -242,6 +242,10 @@ input[type=range] { width: 100%; height: 36px; accent-color: var(--sage); }
 .syncstatus { font-size: 14px; color: var(--ink-2); }
 .syncstatus.error { color: var(--danger); }
 .syncstatus.ok { color: var(--sage-text); }
+.synclast { font-size: 13px; color: var(--ink-2); margin-top: 4px; overflow-wrap: anywhere; }
+.testline { font-size: 14px; color: var(--ink-2); margin-top: 12px; overflow-wrap: anywhere; }
+.testline.ok { color: var(--sage-text); }
+.testline.error { color: var(--danger); }
 
 /* ---- empty ---- */
 .empty { background: var(--surface); border-radius: var(--r); padding: 24px 20px; box-shadow: var(--shadow); display: grid; gap: 10px; }

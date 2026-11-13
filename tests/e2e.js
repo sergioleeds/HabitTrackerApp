@@ -176,7 +176,7 @@ async function until(fn, label, ms = 8000) { const t0 = Date.now(); while (Date.
   // server outage -> pending -> recovers
   mock.opts.down = true;
   await row(pa, 'Leer').click();
-  await until(async () => /Error|pendientes/.test(await pill(pa)), 'A shows error or pending during outage');
+  await until(async () => /Error|No se alcanza|no es la app|pendientes/.test(await pill(pa)), 'A shows error or pending during outage');
   ok('outage visible, data kept', (await row(pa, 'Leer').getAttribute('aria-checked')) === 'true', await pill(pa));
   mock.opts.down = false;
   await pa.evaluate(() => Store.sync());
@@ -188,8 +188,8 @@ async function until(fn, label, ms = 8000) { const t0 = Date.now(); while (Date.
   const C = await device('C');
   await C.page.waitForSelector('.empty');
   await C.page.evaluate(([u]) => Store.configureSync(u, 'wrong-token-xyz'), [GAS]);
-  await until(async () => /Error/.test(await pill(C.page)), 'wrong token shows error');
-  ok('wrong token is rejected by server', /Error de sincronización/.test(await pill(C.page)));
+  await until(async () => /Clave/.test(await pill(C.page)), 'wrong token shows error');
+  ok('wrong token is rejected by server', /Clave no válida/.test(await pill(C.page)));
 
   // sign out and reconnect with the bare code
   await C.page.click('.tab[data-tab=habits]');

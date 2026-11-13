@@ -15,7 +15,7 @@
   var meta = {};                // device-only settings
   var state = { habits: {}, logs: {}, prefs: { threshold: 0.7 } };
   var listeners = [];
-  var syncState = { status: 'off', last: null, error: '', syncing: false };
+  var syncState = { status: 'off', last: null, error: '', code: '', syncing: false };
   var syncTimer = null, pollTimer = null, queue = Promise.resolve();
 
   // ---------- IndexedDB plumbing ----------
@@ -127,7 +127,41 @@
 
   // ---------- sync ----------
   function hasSync() { return !!(meta.syncUrl && meta.syncToken); }
-  function setStatus(s, err) { syncState.status = s; syncState.error = err || ''; emit('sync'); }
+  function setStatus(s, err, code) { syncState.status = s; syncState.error = err || ''; syncState.code = code || ''; emit('sync'); }
+
+  /* Why a request failed. Codes:
+   *   offline      the device itself reports no network
+   *   unreachable  the device is online but fetch could not get a readable answer from the address
+   *                (Apps Script not deployed for "Anyone", wrong address, blocker: the browser hides which)
+   *   http         the address answered with an HTTP error
+   *   notjson      the address answered, but not with the backend's JSON (a login or error page)
+   *   unauthorized the backend rejected the key
+   *   tokenunset   the backend still has the example TOKEN
+   *   server       any other error reported by the backend */
+  function fail(code, msg) { var e = new Error(msg); e.code = code; return e; }
+  function online() { return !(root.navigator && root.navigator.onLine === false); }
+  function errMsg(e) { return String(e && e.message || e); }
+  /** fetch the backend and parse its JSON; rejects with a coded error. */
+  function request(opts) {
+    return root.fetch(meta.syncUrl, opts).then(null, function (e) {
+      throw fail(online() ? 'unreachable' : 'offline', errMsg(e));
+    }).then(function (res) {
+      if (!res.ok) throw fail('http', 'HTTP ' + res.status);
+      return res.text().then(null, function (e) { throw fail(online() ? 'unreachable' : 'offline', errMsg(e)); });
+    }).then(function (txt) {
+      try { return JSON.parse(txt); }
+      catch (e) { throw fail('notjson', String(txt).replace(/\s+/g, ' ').trim().slice(0, 80) || 'empty response'); }
+    });
+  }
+  /** Throws a coded error unless the backend said ok. */
+  function accepted(j) {
+    if (j && j.ok === true) return j;
+    var m = (j && j.error) || 'bad response';
+    throw fail(m === 'unauthorized' ? 'unauthorized' : m === 'server token not set' ? 'tokenunset' : 'server', m);
+  }
+  function postOpts(body) {
+    return { method: 'POST', redirect: 'follow', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify(body) };
+  }
 
   function scheduleSync(ms) {
     if (!hasSync()) return;
@@ -145,7 +179,7 @@
     pollTimer = setInterval(function () {
       if (!root.document || root.document.visibilityState === 'visible') sync();
     }, 60000);
-    sync();
+    return sync();
   }
 
   function sync() {
@@ -157,17 +191,11 @@
 
     function round() {
       var dirty = Object.keys(mem).filter(function (k) { return mem[k].d; }).slice(0, 400).map(function (k) { return mem[k]; });
-      var body = JSON.stringify({
+      return request(postOpts({
         token: meta.syncToken, device: meta.device, since: meta.seq || 0,
         push: dirty.map(function (r) { return { k: r.k, v: r.v, t: r.t }; })
-      });
-      return root.fetch(meta.syncUrl, {
-        method: 'POST', redirect: 'follow', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: body
-      }).then(function (res) {
-        if (!res.ok) throw new Error('HTTP ' + res.status);
-        return res.json();
-      }).then(function (j) {
-        if (!j || j.ok !== true) throw new Error((j && j.error) || 'bad response');
+      })).then(function (j) {
+        accepted(j);
         var rows = [];
         dirty.forEach(function (r) { var cur = mem[r.k]; if (cur && cur.t === r.t) { cur.d = 0; rows.push(cur); } });
         if (j.reset) { // server was emptied or replaced: send everything again
@@ -199,21 +227,48 @@
       return { status: 'ok', changed: changed };
     }).catch(function (e) {
       syncState.syncing = false;
-      var offline = !(root.navigator && root.navigator.onLine) || /Failed to fetch|NetworkError|Load failed/i.test(String(e && e.message));
-      setStatus(offline ? 'offline' : 'error', String(e && e.message || e));
-      return { status: offline ? 'offline' : 'error', error: String(e && e.message || e) };
+      // "offline" only when the device has no network; anything else is a real error worth showing and keeping
+      var code = (e && e.code) || 'unknown', msg = errMsg(e), st = code === 'offline' ? 'offline' : 'error';
+      if (st === 'error') { meta.lastError = { code: code, msg: msg, t: Date.now() }; saveMeta('lastError'); }
+      setStatus(st, msg, code);
+      return { status: st, code: code, error: msg };
+    });
+  }
+
+  /** Checks the saved address step by step without touching local data.
+   *  Resolves { result, detail }: ok | off | offline | nonet | unreachable | notapp | unauthorized | tokenunset | server */
+  function testConnection() {
+    if (!hasSync()) return Promise.resolve({ result: 'off', detail: '' });
+    if (!online()) return Promise.resolve({ result: 'offline', detail: '' });
+    return request({ method: 'GET', redirect: 'follow', cache: 'no-store' }).then(function (j) {
+      if (!j || j.app !== 'habit-tracker-sync') throw fail('notapp', 'unexpected reply');
+      // the health check does not look at the key: an empty push does
+      return request(postOpts({ token: meta.syncToken, device: meta.device, since: meta.seq || 0, push: [] }));
+    }).then(function (j) {
+      accepted(j);
+      return { result: 'ok', detail: '' };
+    }).catch(function (e) {
+      var code = (e && e.code) || 'server', msg = errMsg(e);
+      if (code === 'http' || code === 'notjson') code = 'notapp';
+      if (code === 'offline') return { result: 'offline', detail: msg };
+      if (code !== 'unreachable') return { result: code, detail: msg };
+      // Blind request: it succeeds whenever the host answers at all, so it tells "no route to the server"
+      // apart from "the server answers but the browser may not read it" (private deployment, wrong address).
+      return root.fetch(meta.syncUrl, { method: 'GET', mode: 'no-cors', cache: 'no-store' }).then(
+        function () { return { result: 'unreachable', detail: msg }; },
+        function () { return { result: online() ? 'nonet' : 'offline', detail: msg }; });
     });
   }
 
   function configureSync(url, token) {
     meta.syncUrl = (url || '').trim(); meta.syncToken = (token || '').trim();
-    meta.seq = 0;
-    writeMany('meta', [{ k: 'syncUrl', v: meta.syncUrl }, { k: 'syncToken', v: meta.syncToken }, { k: 'seq', v: 0 }]);
+    meta.seq = 0; meta.lastError = null;     // errors of the previous address say nothing about the new one
+    writeMany('meta', [{ k: 'syncUrl', v: meta.syncUrl }, { k: 'syncToken', v: meta.syncToken }, { k: 'seq', v: 0 }, { k: 'lastError', v: null }]);
     // first sync pushes everything this device has
     Object.keys(mem).forEach(function (k) { mem[k].d = 1; });
     writeMany('rec', Object.keys(mem).map(function (k) { return mem[k]; }));
     clearInterval(pollTimer);
-    if (hasSync()) { startSync(); return sync(); }
+    if (hasSync()) return startSync();     // its first sync is the result (a second call would just say "busy")
     setStatus('off'); return Promise.resolve({ status: 'off' });
   }
 
@@ -257,8 +312,9 @@
     init: init, state: function () { return state; }, setLog: setLog, putHabit: putHabit, putMany: putMany,
     setPrefs: setPrefs, getMeta: getMeta, setMeta: setMeta, on: function (f) { listeners.push(f); },
     sync: sync, configureSync: configureSync, hasSync: hasSync, syncInfo: function () {
-      return { status: syncState.status, last: syncState.last || meta.lastSync || null, error: syncState.error, pending: pendingCount() };
-    },
+      return { status: syncState.status, last: syncState.last || meta.lastSync || null, error: syncState.error, code: syncState.code,
+        lastError: meta.lastError || null, pending: pendingCount() };
+    }, testConnection: testConnection,
     pending: pendingCount, exportData: exportData, importData: importData, toCsv: toCsv, wipe: wipe,
     isPersistent: function () { return persistent; }, _mem: function () { return mem; }
   };
