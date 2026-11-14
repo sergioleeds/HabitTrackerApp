@@ -131,7 +131,7 @@ async function until(fn, label, ms = 8000) { const t0 = Date.now(); while (Date.
   ok('manual form rejects non-https address', (await pa.locator('#toast').innerText()).includes('https'));
   await pa.fill('#f-code', 'esto-no-es-un-codigo'); await pa.click('.btn:text-is("Conectar")');
   ok('bad code is rejected', (await pa.locator('#toast').innerText()).includes('no es válido'));
-  mock.gas.state.deployUrl = GAS; mock.gas.run("APP_URL = '" + APP + "'");
+  mock.gas.run("WEB_APP_URL = '" + GAS + "'; APP_URL = '" + APP + "'");
   const setup = mock.gas.run('getSetupLink()');           // what the user copies from the Apps Script log
   await pa.fill('#f-code', setup.link); await pa.click('.btn:text-is("Conectar")');
   await pa.waitForSelector('.connected');

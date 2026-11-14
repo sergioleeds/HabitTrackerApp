@@ -92,12 +92,22 @@ R.run('removeTriggers()'); ok('triggers removed', R.state.triggers.length === 0)
 
 // --- setup link ---
 let threw = false; try { R.run('getSetupLink()'); } catch (e) { threw = true; }
-ok('setup link needs a deployment', threw);
-R.state.deployUrl = 'https://script.google.com/macros/s/AKfyc_TEST/exec';
+ok('setup link needs WEB_APP_URL', threw);
+R.state.deployUrl = 'https://script.google.com/macros/s/AKfyc_HEAD/dev';   // what getUrl() gives in the editor: must never be used
+threw = false; try { R.run('getSetupLink()'); } catch (e) { threw = /WEB_APP_URL/.test(e.message); }
+ok('setup link ignores ScriptApp getUrl', threw);
+R.run("WEB_APP_URL = 'https://script.google.com/macros/s/AKfyc_HEAD/dev'");
+threw = false; try { R.run('getSetupLink()'); } catch (e) { threw = /\/exec/.test(e.message); }
+ok('setup link refuses a /dev address', threw);
+R.run("WEB_APP_URL = 'https://script.google.com/home/projects/abc/edit'");
+threw = false; try { R.run('getSetupLink()'); } catch (e) { threw = true; }
+ok('setup link refuses the editor address', threw);
+const EXEC = 'https://script.google.com/macros/s/AKfyc_TEST/exec';
+R.run("WEB_APP_URL = '  " + EXEC + " '");
 R.run("APP_URL = 'https://habits.example.app/'");
 const sl = R.run('getSetupLink()');
 const decoded = JSON.parse(decodeURIComponent(escape(Buffer.from(sl.code, 'base64').toString('binary'))));
-ok('setup link carries URL and key', decoded.u === R.state.deployUrl && decoded.k === TOKEN, decoded);
+ok('setup link carries URL and key', decoded.u === EXEC && decoded.k === TOKEN, decoded);
 ok('setup link points at the app', sl.link === 'https://habits.example.app/#sync=' + sl.code);
 console.log(`${checks} checks, ${fails} failures`);
 process.exit(fails ? 1 : 0);

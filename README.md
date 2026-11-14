@@ -35,13 +35,16 @@ Tus datos se guardan en una hoja de Google tuya. «Iniciar sesión» es conectar
 3. En `Code.gs`, cambia `TOKEN` por una clave larga inventada por ti y pon en `APP_URL` la dirección de la app. Guarda.
 4. Ejecuta la función `setup` y acepta los permisos.
 5. **Implementar > Nueva implementación > Aplicación web**. Ejecutar como: **Yo**. Quién tiene acceso: **Cualquier usuario**.
-6. Ejecuta la función `getSetupLink`. En el registro de ejecución aparece un enlace que termina en `#sync=…`.
+6. Copia la **URL de la aplicación web** que aparece al implementar (termina en `/exec`; también está en **Implementar > Gestionar implementaciones**) y pégala en `WEB_APP_URL`, en `Code.gs`. Guarda.
+7. Ejecuta la función `getSetupLink`. En el registro de ejecución aparece un enlace que termina en `#sync=…`.
 
 **En cada dispositivo:** abre ese enlace (envíatelo por correo o mensaje). La app se conecta sola. También puedes pegar el enlace o el código en **Hábitos > Cuenta > Conectar**. Desde un dispositivo ya conectado, **Copiar enlace** genera el mismo enlace.
 
 **Cerrar sesión** (Hábitos > Cuenta) desconecta ese dispositivo y conserva sus datos locales.
 
 Cómo funciona: todo se guarda primero en el dispositivo. Sin conexión puedes seguir apuntando; los cambios se envían al volver internet (arriba verás «Sin conexión · N pendientes» y luego «Sincronizado»). Si dos dispositivos cambian el mismo dato, gana el último cambio.
+
+Si la app dice «No se alcanza el servidor»: en **Hábitos > Cuenta** pulsa **Probar conexión** y comprueba que la dirección guardada termina en `/exec` y que, abierta en una ventana de incógnito, muestra `{"ok":true,"app":"habit-tracker-sync"}` sin pedir que inicies sesión.
 
 Si modificas `Code.gs`: Implementar > Gestionar implementaciones > editar > Versión nueva.
 

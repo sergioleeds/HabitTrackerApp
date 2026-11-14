@@ -639,6 +639,7 @@
       syncCard.appendChild(h('div', { class: 'connected' }, h('i', { class: 'dot ok' }), h('strong', { text: t('connected') })));
       syncCard.appendChild(statusLine);
       syncCard.appendChild(lastErrLine);
+      syncCard.appendChild(h('div', { class: 'synclast', id: 'syncurl', text: t('savedUrl', { u: url }) }));
       syncCard.appendChild(h('p', { class: 'help', text: t('addDeviceHelp') }));
       syncCard.appendChild(h('div', { class: 'btnrow' },
         h('button', { class: 'btn primary', text: t('copyLink'), onclick: function () { copyText(connectLink(), t('linkCopied')); } }),
@@ -646,6 +647,7 @@
         h('button', { class: 'btn', text: t('syncNow'), onclick: function () { S.sync().then(function (r) { toast(syncToast(r)); }); } }),
         h('button', { class: 'btn', id: 'testbtn', text: t('testConn'), onclick: function (e) {
           var b = e.currentTarget; b.disabled = true;
+          if (notExec(S.getMeta('syncUrl', ''))) { lastTest = { result: 'notexec' }; b.disabled = false; paintTest(); return; }   // no need to ask the network
           lastTest = { result: 'testing' }; paintTest();
           S.testConnection().then(function (r) { lastTest = r; b.disabled = false; paintTest(); });
         } }),
@@ -659,6 +661,7 @@
       syncCard.appendChild(h('div', { class: 'btnrow' }, h('button', { class: 'btn primary', text: t('connect'), onclick: function () {
         var o = parseConnect(codeIn.value);
         if (!o) { toast(t('badCode')); return; }
+        if (notExec(o.u)) { toast(t('errExec')); return; }
         S.configureSync(o.u, o.k).then(function (r) { toast(syncToast(r)); render(); });
       } })));
       var urlIn = h('input', { class: 'inp', id: 'f-url', type: 'url', placeholder: 'https://script.google.com/macros/s/…/exec', autocomplete: 'off', autocapitalize: 'off', spellcheck: 'false' });
@@ -669,6 +672,7 @@
         h('div', { class: 'btnrow' }, h('button', { class: 'btn', text: t('saveSync'), onclick: function () {
           var u = urlIn.value.trim(), k = tokIn.value.trim();
           if (!okUrl(u)) { toast(t('errUrl')); return; }
+          if (notExec(u)) { toast(t('errExec')); return; }
           if (!k) { toast(t('errToken')); return; }
           S.configureSync(u, k).then(function (r) { toast(syncToast(r)); render(); });
         } }))));
@@ -700,6 +704,9 @@
     return wrap;
   }
   function okUrl(u) { return /^https:\/\//.test(u) || /^http:\/\/(localhost|127\.0\.0\.1)([:\/]|$)/.test(u); }   // http only for local testing
+  /** A Google Apps Script address that is not the public web app one (/exec): the test address (/dev) or the editor's.
+   *  Those only answer to the signed-in owner, never to the app. */
+  function notExec(u) { return /^https:\/\/script\.google\.com\//i.test(u) && !/\/exec$/.test(String(u).split(/[?#]/)[0]); }
   function connectCode() { return btoa(unescape(encodeURIComponent(JSON.stringify({ u: S.getMeta('syncUrl', ''), k: S.getMeta('syncToken', '') })))); }
   function connectLink() { return location.origin + location.pathname + '#sync=' + connectCode(); }
   /** Accepts a full link, "#sync=..." or the bare code. Returns {u,k} or null. */
@@ -754,7 +761,7 @@
   // result of the last "Test connection" (kept so a re-render does not wipe it)
   var lastTest = null;
   var TEST_KEYS = { testing: 'testing', ok: 'testOk', offline: 'testOffline', nonet: 'testNoNet', unreachable: 'testUnreachable',
-    unauthorized: 'testBadKey', tokenunset: 'testTokenUnset', notapp: 'testNotApp', server: 'testServer' };
+    unauthorized: 'testBadKey', tokenunset: 'testTokenUnset', notapp: 'testNotApp', server: 'testServer', notexec: 'testNotExec' };
   function testText() { return lastTest ? t(TEST_KEYS[lastTest.result] || 'testServer', { d: lastTest.detail || '' }) : ''; }
   function testClass() { return !lastTest || lastTest.result === 'testing' ? '' : lastTest.result === 'ok' ? 'ok' : 'error'; }
   function paintTest() {
@@ -844,7 +851,8 @@
     tip = $('#tip'); toastEl = $('#toast');
     var link = importLinkFromHash();
     S.init().then(function () {
-      if (link) { S.configureSync(link.u, link.k); }
+      var badLink = link && notExec(link.u);
+      if (link && !badLink) { S.configureSync(link.u, link.k); }
       var nav = (navigator.language || 'es').toLowerCase();
       lang = S.getMeta('lang', nav.indexOf('en') === 0 ? 'en' : 'es'); locale = lang === 'es' ? 'es-ES' : 'en-GB';
       ui.period = S.getMeta('period', '3'); ui.habit = S.getMeta('panelHabit', 'all');
@@ -855,7 +863,7 @@
         render();
       });
       render();
-      if (link) toast(t('linkImported'));
+      if (link) toast(t(badLink ? 'errExec' : 'linkImported'));
       if (!S.isPersistent()) toast(t('noStorage'));
       registerSW();
     });

@@ -9,7 +9,8 @@
  * Setup (once): see README.md. In short:
  *  1. Put your own secret in TOKEN below.
  *  2. Run `setup` once and accept the permissions.
- *  3. Deploy > New deployment > Web app > Execute as: Me, Who has access: Anyone. Copy the /exec address into the app.
+ *  3. Deploy > New deployment > Web app > Execute as: Me, Who has access: Anyone.
+ *     Copy the web app URL (it ends in /exec) into WEB_APP_URL below, then run `getSetupLink`.
  *  4. Optional: run `installTriggers` for the daily email.
  *
  * The sheet is only reachable by someone who knows both the address and the TOKEN.
@@ -17,6 +18,7 @@
 
 // ---------- settings you may change ----------
 var TOKEN = 'CAMBIA-ESTA-CLAVE';       // required: any long random text. Paste the same text in the app.
+var WEB_APP_URL = '';                  // required for getSetupLink: the web app URL from Deploy > Manage deployments (ends in /exec)
 var REMINDER_HOUR = 21;                // hour of the day (script time zone) for the reminder email
 var REMINDER_LANG = 'es';              // 'es' or 'en'
 var APP_URL = '';                      // optional: where you host the app, added to the email
@@ -131,8 +133,11 @@ function json_(obj) {
  */
 function getSetupLink() {
   if (TOKEN === DEFAULT_TOKEN_ || TOKEN.length < 8) throw new Error('Edit TOKEN at the top of Code.gs first (at least 8 characters).');
-  var url = ScriptApp.getService().getUrl();
-  if (!url) throw new Error('Deploy the web app first (Deploy > New deployment > Web app).');
+  // Not ScriptApp.getService().getUrl(): run from the editor it can return the test address (/dev) or another
+  // deployment's, which only answer to a signed-in owner, so the app could never reach them.
+  var url = String(WEB_APP_URL || '').trim();
+  if (!url) throw new Error('Paste the web app URL in WEB_APP_URL at the top of Code.gs: Deploy > Manage deployments > Web app URL (it ends in /exec). Deploy first if you have not (Deploy > New deployment > Web app, access: Anyone).');
+  if (!/^https?:\/\/[^\s]+\/exec$/.test(url)) throw new Error('WEB_APP_URL must be the web app URL that ends in /exec (not /dev, and not the editor address). Copy it from Deploy > Manage deployments.');
   var code = Utilities.base64Encode(JSON.stringify({ u: url, k: TOKEN }), Utilities.Charset.UTF_8);
   var link = (APP_URL || 'https://YOUR-APP-ADDRESS/') + '#sync=' + code;
   Logger.log('Code (paste it in the app: Habits > Account):\n' + code);

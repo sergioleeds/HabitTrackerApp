@@ -114,6 +114,15 @@ const good = (url, o) => o.method === 'GET' ? json({ ok: true, app: 'habit-track
   const missing = Object.keys(I.es).filter(k => !(k in I.en)).concat(Object.keys(I.en).filter(k => !(k in I.es)));
   ok('i18n keys match in es and en', missing.length === 0, missing);
 
+  // addresses the app must refuse: Google's test (/dev) and editor addresses
+  const src = require('fs').readFileSync(__dirname + '/../app/app.js', 'utf8');
+  const notExec = new Function(/function notExec\(u\) \{.*\}/.exec(src)[0] + '; return notExec;')();
+  ok('/exec is accepted', !notExec('https://script.google.com/macros/s/AKfyc_x/exec'));
+  ok('/exec with a query is accepted', !notExec('https://script.google.com/macros/s/AKfyc_x/exec?a=1'));
+  ok('/dev is refused', notExec('https://script.google.com/macros/s/AKfyc_x/dev'));
+  ok('editor address is refused', notExec('https://script.google.com/home/projects/abc/edit'));
+  ok('other hosts are left alone', !notExec('http://127.0.0.1:8124/exec') && !notExec('https://example.com/sync'));
+
   console.log(`${checks} checks, ${fails} failures`);
   process.exit(fails ? 1 : 0);
 })().catch(e => { console.error('CRASH', e); process.exit(2); });
