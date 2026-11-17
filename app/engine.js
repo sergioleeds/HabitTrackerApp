@@ -6,6 +6,9 @@
  *    gets the result of its own week, so a big week does not cover a missed one.
  *  - Weekly/monthly number goals can be a total (basis 'total', the default) or a daily average
  *    (basis 'avg': goal per day, judged over the week/month so a long day covers a short one).
+ *  - Number goals can be a limit (dir 'max', e.g. screen time <= 3 h). Daily: a logged value within
+ *    the limit is met, going over scores limit/value, nothing logged is not met. Weekly/monthly: a budget,
+ *    used up against the pace (total) or as an average over the logged days (avg).
  *  - Numbers: "strict" caps each day at the goal, "average" lets a big day cover missed ones.
  *  - Streaks: day score >= threshold (overall) or goal met (per habit); today may still be open.
  * Dates are 'YYYY-MM-DD' strings, months are 'YYYY-MM'. Works in browser, Node and Apps Script. */
@@ -81,15 +84,20 @@
     return day && day[id] !== undefined ? day[id] : null;
   }
   function num(v) { return typeof v === 'number' && isFinite(v) ? v : 0; }
+  function isMax(h, c) { return h.type === 'number' && !!c && c.dir === 'max'; }
   /** Did the habit meet its goal that day (daily habits only)? */
   function met(h, c, v) {
     if (h.type === 'check') return v === true;
+    if (isMax(h, c)) return typeof v === 'number' && v <= c.goal + 1e-9;
     return num(v) >= c.goal;
   }
   function fraction(h, c, v) { // 0..1 credit for the day score
     if (h.type === 'check') return v === true ? 1 : 0;
+    if (isMax(h, c)) return typeof v !== 'number' ? 0 : v <= c.goal ? 1 : c.goal / v;
     return c.goal > 0 ? Math.min(1, num(v) / c.goal) : 0;
   }
+  /** Budget score for a limit over a period: 1 while used <= allowed, then allowed/used. */
+  function budget(used, allowed) { return used <= allowed + 1e-9 ? 1 : allowed / used; }
 
   /** First day of the month a daily habit counts from: the day it was created (or an earlier day you logged). */
   function startDay(state, h, mk) {
@@ -127,7 +135,7 @@
   // ---------- weekly-goal habits ----------
   /** One weekly habit over the week starting ws (Monday): total and pace-based pct up to today. */
   function weeklyHabitWeek(state, h, ws, today) {
-    var tot = 0, n = 0, c = null, i, d, cc, v;
+    var tot = 0, n = 0, logged = 0, c = null, i, d, cc, v;
     for (i = 0; i < 7; i++) {
       d = addDays(ws, i);
       if (d > today) break;
@@ -135,12 +143,19 @@
       if (!cc || cc.period !== 'weekly' || +d.slice(8, 10) < startDay(state, h, monthKey(d))) continue;
       c = cc; n++;
       v = val(state, d, h.id);
+      if (typeof v === 'number') logged++;
       tot += h.type === 'check' ? (v === true ? 1 : 0) : num(v);
     }
     var basis = c && c.basis === 'avg' ? 'avg' : 'total';
     var out = { total: tot, days: n, goal: c ? c.goal : 0, basis: basis, avg: n ? tot / n : 0,
       target: c ? (basis === 'avg' ? c.goal * 7 : c.goal) : 0, pace: c ? perDayGoal(c, 7) * n : 0, pct: null };
-    if (c && c.goal > 0 && n > 0) out.pct = Math.min(1, tot / out.pace);
+    if (c && c.goal > 0 && n > 0) {
+      if (isMax(h, c)) {
+        out.max = true;
+        if (basis === 'avg') { out.avg = logged ? tot / logged : 0; if (logged) out.pct = budget(tot, c.goal * logged); }
+        else out.pct = budget(tot, out.pace);
+      } else out.pct = Math.min(1, tot / out.pace);
+    }
     return out;
   }
 
@@ -149,19 +164,28 @@
     var avgB = c.period !== 'daily' && c.basis === 'avg';
     var sd = c.period !== 'monthly' || avgB ? startDay(state, h, mk) : 1; // count from the habit's first day (monthly totals: whole month)
     var el2 = Math.max(0, el - sd + 1), dim2 = dim - sd + 1;
-    var tot = 0, capped = 0;
+    var tot = 0, capped = 0, logged = 0, mx = isMax(h, c);
     for (i = 1; i <= dim; i++) {
       d = mk + '-' + pad(i); v = val(state, d, h.id);
       if (h.type === 'check') { if (v === true) tot += 1; }
       else {
         tot += num(v);
-        if (i >= sd && i <= el) capped += Math.min(num(v), c.goal);
+        if (i >= sd && i <= el) {
+          capped += mx ? fraction(h, c, v) * c.goal : Math.min(num(v), c.goal);
+          if (typeof v === 'number') logged++;
+        }
       }
     }
     var pct = null, target;
     if (c.period === 'monthly') {
-      if (avgB) { target = c.goal * dim2; if (el2 > 0) pct = Math.min(1, tot / (c.goal * el2)); }
-      else { target = c.goal; if (el > 0) pct = Math.min(1, tot / (c.goal * el / dim)); }
+      if (avgB) {
+        target = c.goal * dim2;
+        if (mx) { if (logged) pct = budget(tot, c.goal * logged); }
+        else if (el2 > 0) pct = Math.min(1, tot / (c.goal * el2));
+      } else {
+        target = c.goal;
+        if (el > 0) pct = mx ? budget(tot, c.goal * el / dim) : Math.min(1, tot / (c.goal * el / dim));
+      }
     } else if (c.period === 'weekly') {
       target = perDayGoal(c, 7) * dim2;
       if (el2 > 0) {                                                  // each elapsed day takes its week's result
@@ -180,14 +204,15 @@
     } else {
       target = c.goal * dim2;
       if (el2 > 0) {
-        if (c.method === 'average') pct = Math.min(1, tot / (c.goal * el2));
+        if (c.method === 'average' && !mx) pct = Math.min(1, tot / (c.goal * el2));
         else pct = capped / (c.goal * el2);
       }
     }
     var span = c.period !== 'monthly' || avgB ? el2 : el;
+    if (mx && avgB) span = logged;                                   // a limit's average is over the logged days
     return {
       id: h.id, name: h.name, type: h.type, unit: h.unit || '', goal: c.goal, period: c.period,
-      method: c.method, basis: c.basis === 'avg' ? 'avg' : 'total', weight: c.weight, total: tot, target: target, pct: pct,
+      method: c.method, dir: mx ? 'max' : 'min', basis: c.basis === 'avg' ? 'avg' : 'total', weight: c.weight, total: tot, target: target, pct: pct,
       avg: span > 0 ? tot / span : 0, days: span
     };
   }
@@ -233,7 +258,7 @@
         p.goalSum += a.h.type === 'check' ? 1 : a.c.goal;
         if (met(a.h, a.c, v)) p.met++;
         if (a.h.type === 'check') { if (v === true) { p.total++; p.capped++; } }
-        else { p.total += num(v); p.capped += Math.min(num(v), a.c.goal); }
+        else { p.total += num(v); p.capped += isMax(a.h, a.c) ? fraction(a.h, a.c, v) * a.c.goal : Math.min(num(v), a.c.goal); }
       });
     }
     var last = today < ws ? null : (today > we ? we : today);
@@ -250,15 +275,15 @@
         var r = p.weekly;
         if (r.pct !== null) { sw += +c.weight || 0; sp += (+c.weight || 0) * r.pct; }
         return {
-          id: id, name: h.name, type: h.type, unit: h.unit || '', goal: r.goal, period: 'weekly', method: c.method, basis: r.basis, weight: c.weight,
+          id: id, name: h.name, type: h.type, unit: h.unit || '', goal: r.goal, period: 'weekly', method: c.method, dir: r.max ? 'max' : 'min', basis: r.basis, weight: c.weight,
           total: r.total, target: r.target, pct: r.pct, days: r.days, avg: r.avg,
           missing: Math.max(0, r.target - r.total), pace: r.pace
         };
       }
-      if (p.goalSum > 0) pct = h.type === 'number' && c.method === 'average' ? Math.min(1, p.total / p.goalSum) : p.capped / p.goalSum;
+      if (p.goalSum > 0) pct = h.type === 'number' && c.method === 'average' && !isMax(h, c) ? Math.min(1, p.total / p.goalSum) : p.capped / p.goalSum;
       if (pct !== null) { sw += +c.weight || 0; sp += (+c.weight || 0) * pct; }
       return {
-        id: id, name: h.name, type: h.type, unit: h.unit || '', goal: c.goal, period: 'daily', method: c.method, weight: c.weight,
+        id: id, name: h.name, type: h.type, unit: h.unit || '', goal: c.goal, period: 'daily', method: c.method, dir: isMax(h, c) ? 'max' : 'min', weight: c.weight,
         total: p.total, target: p.goalSum, pct: pct, met: p.met, days: p.days, avg: p.days ? p.total / p.days : 0,
         missing: Math.max(0, p.goalSum - p.total)
       };
@@ -379,6 +404,10 @@
     var mk = monthKey(today), out = [];
     activeIn(state, mk).forEach(function (a) {
       var hm = habitMonth(state, a, mk, today), v = val(state, today, a.h.id);
+      if (isMax(a.h, a.c)) {                                           // a limit: only ask to log today's daily value
+        if (a.c.period === 'daily' && typeof v !== 'number') out.push({ id: a.h.id, name: a.h.name, kind: 'check' });
+        return;
+      }
       if (a.c.period === 'monthly') {
         var pace = a.c.basis === 'avg' ? a.c.goal * hm.days : a.c.goal * elapsedDays(mk, today) / daysInMonth(mk);
         if (hm.total < pace - 1e-9) out.push({ id: a.h.id, name: a.h.name, kind: 'pace', total: clean(hm.total), goal: clean(hm.target), unit: a.h.unit || '' });
@@ -416,6 +445,6 @@
     dayScore: dayScore, monthStats: monthStats, elapsedDays: elapsedDays, weekStart: weekStart, weekStats: weekStats, weeklyHabitWeek: weeklyHabitWeek,
     overallStreak: overallStreak, habitStreak: habitStreak, overallStreakAt: overallStreakAt, habitStreakAt: habitStreakAt,
     periodRange: periodRange, periodStats: periodStats, pendingToday: pendingToday, stepFor: stepFor, clean: clean,
-    val: val, met: met, hasLogs: hasLogs, startDay: startDay
+    val: val, met: met, fraction: fraction, isMax: isMax, hasLogs: hasLogs, startDay: startDay
   };
 });

@@ -128,5 +128,43 @@ eq('avg monthly from creation: pending', pm ? pm.total : null, 15.5);
 const st2 = JSON.parse(JSON.stringify(sa)); delete st2.habits.zz.versions[0].basis; st2.habits.zz.versions[0].goal = 56;
 eq('total basis same as avg*7', E.weeklyHabitWeek(st2, st2.habits.zz, '2026-11-09', '2026-11-11').pct, 23 / 24);
 
+// ---------- limits (dir 'max'), e.g. screen time <= 3 h ----------
+const sx = { habits: {
+  scr: { id: 'scr', name: 'Pantalla', type: 'number', unit: 'h', order: 1, created: '2026-10-01', versions: [{ from: '2026-10', goal: 3, period: 'daily', method: 'average', dir: 'max', weight: 1 }] },
+  wk: { id: 'wk', name: 'Pantalla sem', type: 'number', unit: 'h', order: 2, created: '2026-10-01', versions: [{ from: '2026-10', goal: 21, period: 'weekly', method: 'strict', dir: 'max', weight: 1 }] },
+  av: { id: 'av', name: 'Pantalla media', type: 'number', unit: 'h', order: 3, created: '2026-10-01', versions: [{ from: '2026-10', goal: 3, period: 'weekly', method: 'strict', basis: 'avg', dir: 'max', weight: 1 }] }
+}, logs: {} };
+const lx = (d, id, v) => { (sx.logs[d] = sx.logs[d] || {})[id] = v; };
+lx('2026-11-09', 'scr', 2); lx('2026-11-10', 'scr', 6); lx('2026-11-11', 'scr', 0);   // within, double, zero
+const hs = sx.habits.scr, cs = hs.versions[0];
+eq('limit met under', E.met(hs, cs, 2) ? 1 : 0, 1); eq('limit met at', E.met(hs, cs, 3) ? 1 : 0, 1);
+eq('limit not met over', E.met(hs, cs, 3.5) ? 1 : 0, 0); eq('limit not met unlogged', E.met(hs, cs, null) ? 1 : 0, 0);
+eq('limit zero is met', E.met(hs, cs, 0) ? 1 : 0, 1);
+eq('day score over', E.dayScore({ habits: { scr: hs }, logs: sx.logs }, '2026-11-10'), 0.5);
+eq('day score unlogged', E.dayScore({ habits: { scr: hs }, logs: sx.logs }, '2026-11-12'), 0);
+w = E.weekStats(sx, '2026-11-09', '2026-11-11');
+const ws_ = w.habits.find(h => h.id === 'scr');
+eq('limit week pct (avg method ignored)', ws_.pct, (1 + 0.5 + 1) / 3); eq('limit week met days', ws_.met, 2); eq('limit dir', ws_.dir === 'max' ? 1 : 0, 1);
+eq('limit streak', E.habitStreak(sx, 'scr', '2026-11-11'), 1);
+// weekly budget 21 h: 3 days elapsed -> 9 h allowed so far
+lx('2026-11-09', 'wk', 4); lx('2026-11-10', 'wk', 4);
+eq('budget within pace', E.weeklyHabitWeek(sx, sx.habits.wk, '2026-11-09', '2026-11-11').pct, 1);
+lx('2026-11-11', 'wk', 4);   // 12 h > 9 h
+eq('budget over pace', E.weeklyHabitWeek(sx, sx.habits.wk, '2026-11-09', '2026-11-11').pct, 9 / 12);
+// weekly average limit: over logged days only
+lx('2026-11-09', 'av', 2); lx('2026-11-10', 'av', 5);   // avg 3.5 over 2 logged days
+r = E.weeklyHabitWeek(sx, sx.habits.av, '2026-11-09', '2026-11-11');
+eq('avg limit avg', r.avg, 3.5); eq('avg limit pct', r.pct, 6 / 7);
+eq('avg limit none logged', E.weeklyHabitWeek(sx, sx.habits.av, '2026-11-02', '2026-11-11').pct, null);
+// month view of the daily limit: strict credit per day
+mh = E.monthStats(sx, '2026-11', '2026-11-11').habits.find(h => h.id === 'scr');
+eq('limit month pct', mh.pct, 2.5 / 11);
+// pending: only asks to log today's daily value
+let px = E.pendingToday(sx, '2026-11-12');
+eq('pending limit unlogged', px.filter(p => p.id === 'scr' && p.kind === 'check').length, 1);
+eq('pending budgets never listed', px.filter(p => p.id !== 'scr').length, 0);
+lx('2026-11-12', 'scr', 5);
+eq('pending limit logged (even over)', E.pendingToday(sx, '2026-11-12').filter(p => p.id === 'scr').length, 0);
+
 console.log(`${checks} checks, ${fails} failures`);
 process.exit(fails ? 1 : 0);

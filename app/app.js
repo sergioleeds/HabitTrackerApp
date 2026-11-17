@@ -81,6 +81,7 @@
   /** "objetivo 3 sesiones/semana", "media 8 h/día · cada semana"… */
   function goalText(hb, c) {
     var g = nf(c.goal) + (hb.unit ? ' ' + hb.unit : '');
+    if (E.isMax(hb, c)) return t(isAvg(c) ? (c.period === 'weekly' ? 'limAvgWeekly' : 'limAvgMonthly') : c.period === 'weekly' ? 'limWeekly' : c.period === 'monthly' ? 'limMonthly' : 'limDaily', { n: g });
     if (isAvg(c)) return t(c.period === 'weekly' ? 'goalAvgWeekly' : 'goalAvgMonthly', { n: g });
     if (c.period === 'monthly') return t('goalMonthly', { n: g });
     if (c.period === 'weekly') return t('goalWeekly', { n: g });
@@ -175,22 +176,28 @@
         monthBadge(c, bm, isCur));
     }
     // number
-    var x = typeof v === 'number' ? v : 0, step = hb.step || E.stepFor(c.goal);
+    var x = typeof v === 'number' ? v : 0, step = hb.step || E.stepFor(c.goal), mx = E.isMax(hb, c);
     var fill = c.period === 'daily' ? Math.min(1, x / c.goal) : (bm.pct === null ? 0 : bm.pct);
-    var sub2 = '';
-    if (c.period !== 'daily') sub2 = progressText(hb, c, bm.total, bm.avg) + ' ' + periodWord;
-    else if (c.method === 'average' && isCur) {
+    if (mx && c.period !== 'daily') fill = Math.min(1, bm.total / (isAvg(c) ? c.goal * 7 : c.goal));   // budget used
+    var sub2 = '', over = false;
+    if (c.period !== 'daily') {
+      sub2 = progressText(hb, c, bm.total, bm.avg) + ' ' + periodWord;
+      if (mx && bm.pct !== null) { over = bm.pct < 1 - 1e-9; sub2 += ' · ' + (over ? t('overLimit') : t('withinLimit')); }
+    } else if (mx) {
+      over = typeof v === 'number' && v > c.goal + 1e-9;
+      sub2 = typeof v !== 'number' ? t('notLogged') : over ? t('overBy', { n: nf(E.clean(v - c.goal)) + (hb.unit ? ' ' + hb.unit : '') }) : t('withinLimit');
+    } else if (c.method === 'average' && isCur) {
       var miss = c.goal * E.elapsedDays(mk, today) - bm.total;
       sub2 = miss > 0.0001 ? t('behind', { n: nf(Math.round(miss * 100) / 100), u: hb.unit || '' }) : t('onTrack');
     } else if (E.met(hb, c, v)) sub2 = t('goalMet');
     var unitTxt = hb.unit ? ' ' + hb.unit : '';
-    var valBtn = h('button', { class: 'val', 'aria-label': t('editValue', { name: hb.name }), onclick: function (ev) { editValue(ev.currentTarget, date, id, x); } }, nf(x) + unitTxt);
-    return h('div', { class: 'row num' + (E.met(hb, c, v) && c.period === 'daily' ? ' met' : ''), style: '--fill:' + Math.round(fill * 100) + '%' },
+    var valBtn = h('button', { class: 'val', 'aria-label': t('editValue', { name: hb.name }), onclick: function (ev) { editValue(ev.currentTarget, date, id, x); } }, mx && typeof v !== 'number' ? '–' : nf(x) + unitTxt);
+    return h('div', { class: 'row num' + (E.met(hb, c, v) && c.period === 'daily' ? ' met' : '') + (mx ? ' limit' : '') + (over ? ' over' : ''), style: '--fill:' + Math.round(fill * 100) + '%' },
       h('div', { class: 'ntop' },
         h('div', { class: 'rtext' }, h('span', { class: 'rname', text: hb.name }), sub2 ? h('span', { class: 'rsub', text: sub2 }) : null),
-        c.period === 'daily' ? h('span', { class: 'ngoal', text: t('ofGoal', { n: nf(c.goal) + unitTxt }) }) : null),
+        c.period === 'daily' ? h('span', { class: 'ngoal', text: t(mx ? 'maxGoal' : 'ofGoal', { n: nf(c.goal) + unitTxt }) }) : null),
       h('div', { class: 'stepper' },
-        h('button', { class: 'step', 'aria-label': t('minus', { name: hb.name }), disabled: x <= 0, onclick: function () { S.setLog(date, id, Math.max(0, E.clean(x - step)) || null); } }, icon('minus')),
+        h('button', { class: 'step', 'aria-label': t('minus', { name: hb.name }), disabled: mx ? v === 0 : x <= 0, onclick: function () { var nx = Math.max(0, E.clean(x - step)); S.setLog(date, id, mx ? nx : nx || null); } }, icon('minus')),
         valBtn,
         h('button', { class: 'step', 'aria-label': t('plus', { name: hb.name }), onclick: function () { S.setLog(date, id, E.clean(x + step)); } }, icon('plus'))));
   }
@@ -224,11 +231,13 @@
   }
   function weekHabitSub(x) {
     var u = x.unit ? ' ' + x.unit : '', r2 = function (n) { return nf(Math.round(n * 100) / 100); };
+    if (x.period === 'weekly' && x.dir === 'max') return (x.basis === 'avg' ? t('avgOf', { a: r2(x.avg), b: r2(x.goal) + u }) : r2(x.total) + ' / ' + r2(x.goal) + u) + ' · ' +
+      (x.pct === null ? t('notLogged') : x.pct >= 1 - 1e-9 ? t('withinLimit') : t('overLimit'));
     if (x.period === 'weekly') return (x.basis === 'avg' ? t('avgOf', { a: r2(x.avg), b: r2(x.goal) + u }) : r2(x.total) + ' / ' + r2(x.goal) + (x.unit ? u : x.type === 'check' ? ' ' + t('timesWord') : '')) + ' · ' +
       (x.pct === null ? '' : x.pct >= 1 - 1e-9 ? (x.total >= x.target - 1e-9 ? t('goalMet') : t('onPace')) : t('belowPace'));
     if (x.type === 'check') return t('daysMet', { a: x.met, b: x.days });
     var s = r2(x.total) + ' / ' + r2(x.target) + u + ' · ' + t('avgDay', { n: r2(x.avg) + u });
-    if (x.method === 'average') s += ' · ' + (x.missing > 0.0001 ? t('weekMissing', { n: r2(x.missing) + u }) : t('onTrack'));
+    if (x.method === 'average' && x.dir !== 'max') s += ' · ' + (x.missing > 0.0001 ? t('weekMissing', { n: r2(x.missing) + u }) : t('onTrack'));
     else s += ' · ' + t('daysMet', { a: x.met, b: x.days });
     return s;
   }
@@ -442,11 +451,12 @@
     var v = E.val(st, d, hb.id);
     if (c.period !== 'daily') return v === true || (typeof v === 'number' && v > 0) ? 1 : 0;
     if (hb.type === 'check') return v === true ? 1 : 0;
-    return c.goal > 0 ? Math.min(1, (typeof v === 'number' ? v : 0) / c.goal) : 0;
+    return E.fraction(hb, c, v);
   }
   function habitValueText(st, hb, d) {
     var v = E.val(st, d, hb.id), u = hb.unit ? ' ' + hb.unit : '';
     if (hb.type === 'check') return v === true ? t('done') : t('notDone');
+    if (typeof v !== 'number' && E.isMax(hb, E.cfgFor(hb, E.monthKey(d)))) return t('notLogged');
     return nf(typeof v === 'number' ? v : 0) + u;
   }
 
@@ -535,7 +545,7 @@
     // habit settings in force
     var cfgTxt = (isCheck ? t('typeCheck') : t('typeNumber')) + ' · ' +
       goalText(hb, cfg) +
-      (!isCheck && cfg.period === 'daily' ? ' · ' + (cfg.method === 'average' ? t('mAverage') : t('mStrict')) : '') + ' · ' + t('weightShort', { n: nf(cfg.weight) });
+      (!isCheck && cfg.period === 'daily' && !E.isMax(hb, cfg) ? ' · ' + (cfg.method === 'average' ? t('mAverage') : t('mStrict')) : '') + ' · ' + t('weightShort', { n: nf(cfg.weight) });
     root.appendChild(h('p', { class: 'muted rangeline', text: cfgTxt }));
   }
 
@@ -580,7 +590,7 @@
       var c = E.cfgFor(hb, cur);
       var desc = (hb.type === 'check' ? t('typeCheck') : t('typeNumber')) + ' · ' +
         goalText(hb, c) +
-        (hb.type === 'number' && c.period === 'daily' ? ' · ' + (c.method === 'average' ? t('mAverage') : t('mStrict')) : '') + ' · ' + t('weightShort', { n: nf(c.weight) });
+        (hb.type === 'number' && c.period === 'daily' && !E.isMax(hb, c) ? ' · ' + (c.method === 'average' ? t('mAverage') : t('mStrict')) : '') + ' · ' + t('weightShort', { n: nf(c.weight) });
       return h('div', { class: 'hrow' },
         h('div', { class: 'hr-main' }, h('div', { class: 'hr-name', text: hb.name }), h('div', { class: 'hr-sub muted', text: desc })),
         h('div', { class: 'hr-act' },
@@ -634,7 +644,7 @@
   function openEditor(id) {
     var st = S.state(), cur = E.monthKey(today), hb = id ? st.habits[id] : null;
     var c = hb ? E.cfgFor(hb, cur) || hb.versions[hb.versions.length - 1] : { goal: 1, period: 'daily', method: 'strict', weight: 1 };
-    var f = { name: hb ? hb.name : '', type: hb ? hb.type : 'check', unit: hb ? hb.unit || '' : '', period: c.period, goal: c.goal, method: c.method, basis: c.basis === 'avg' ? 'avg' : 'total', weight: c.weight, scope: 'now' };
+    var f = { name: hb ? hb.name : '', type: hb ? hb.type : 'check', unit: hb ? hb.unit || '' : '', period: c.period, goal: c.goal, method: c.method, basis: c.basis === 'avg' ? 'avg' : 'total', dir: c.dir === 'max' ? 'max' : 'min', weight: c.weight, scope: 'now' };
     var dlg = h('dialog', { class: 'sheet', 'aria-label': hb ? t('editHabit') : t('newHabit') });
     var body = h('div', { class: 'sheet-body' });
     dlg.appendChild(body);
@@ -653,14 +663,16 @@
       if (f.type === 'number') body.appendChild(field(t('fUnit'), h('input', { class: 'inp', id: 'f-unit', type: 'text', value: f.unit, maxlength: '12', placeholder: 'reps, h, L…', oninput: function (e) { f.unit = e.target.value; } }), 'f-unit'));
       body.appendChild(field(t('fPeriod'), seg('period', [['daily', t('pDaily')], ['weekly', t('pWeekly')], ['monthly', t('pMonthly')]]), null, f.period === 'monthly' ? t('pMonthlyHelp') : f.period === 'weekly' ? t('pWeeklyHelp') : t('pDailyHelp')));
       if (f.type === 'check' && f.period !== 'daily') body.appendChild(field(t('fUnit'), h('input', { class: 'inp', id: 'f-unit', type: 'text', value: f.unit, maxlength: '12', placeholder: t('unitTimesPh'), oninput: function (e) { f.unit = e.target.value; } }), 'f-unit'));
+      if (f.type === 'number') body.appendChild(field(t('fDir'), seg('dir', [['min', t('dMin')], ['max', t('dMax')]]), null, f.dir === 'max' ? t('dMaxHelp') : t('dMinHelp')));
       var avgGoal = f.type === 'number' && f.period !== 'daily';
       if (avgGoal) body.appendChild(field(t('fBasis'), seg('basis', [['total', t('bTotal')], ['avg', t('bAvg')]]), null,
         f.basis === 'avg' ? t(f.period === 'weekly' ? 'bAvgHelpW' : 'bAvgHelpM') : t(f.period === 'weekly' ? 'bTotalHelpW' : 'bTotalHelpM')));
       if (f.type === 'number' || f.period !== 'daily') {
         var goalIn = h('input', { class: 'inp', id: 'f-goal', type: 'text', inputmode: 'decimal', value: String(f.goal).replace('.', lang === 'es' ? ',' : '.'), oninput: function (e) { f.goalRaw = e.target.value; } });
-        body.appendChild(field(avgGoal && f.basis === 'avg' ? t('fGoalAvg') : f.period === 'monthly' ? t('fGoalMonth') : f.period === 'weekly' ? t('fGoalWeek') : t('fGoalDay'), goalIn, 'f-goal'));
+        var gk = avgGoal && f.basis === 'avg' ? 'fGoalAvg' : f.period === 'monthly' ? 'fGoalMonth' : f.period === 'weekly' ? 'fGoalWeek' : 'fGoalDay';
+        body.appendChild(field(t(f.type === 'number' && f.dir === 'max' ? gk + 'Max' : gk), goalIn, 'f-goal'));
       }
-      if (f.type === 'number' && f.period === 'daily') {
+      if (f.type === 'number' && f.period === 'daily' && f.dir !== 'max') {
         body.appendChild(field(t('fMethod'), seg('method', [['strict', t('mStrict')], ['average', t('mAverage')]]), null, f.method === 'average' ? t('mAverageHelp') : t('mStrictHelp')));
       }
       body.appendChild(field(t('fWeight'), h('input', { class: 'inp', id: 'f-weight', type: 'text', inputmode: 'decimal', value: String(f.weight).replace('.', lang === 'es' ? ',' : '.'), oninput: function (e) { f.weightRaw = e.target.value; } }), 'f-weight', t('weightHelp')));
@@ -694,15 +706,16 @@
       var weight = parseNum(f.weightRaw, f.weight);
       if (!(goal > 0) || goal > 1e7) { err.textContent = t('errGoal'); return; }
       if (!(weight > 0) || weight > 100) { err.textContent = t('errWeight'); return; }
-      var method = f.type === 'number' && f.period === 'daily' ? f.method : 'strict';
+      var method = f.type === 'number' && f.period === 'daily' && f.dir !== 'max' ? f.method : 'strict';
       var ver = { goal: goal, period: f.period, method: method, weight: weight };
       if (f.type === 'number' && f.period !== 'daily' && f.basis === 'avg') ver.basis = 'avg';
+      if (f.type === 'number' && f.dir === 'max') ver.dir = 'max';
       if (!hb) {
         var all = E.sortedHabits(st), order = all.length ? all[all.length - 1].order + 1 : 1;
         S.putHabit({ id: newId(), name: name, type: f.type, unit: f.type === 'number' ? f.unit.trim() : (f.period !== 'daily' ? f.unit.trim() : ''), order: order, created: today, archivedFrom: null, versions: [Object.assign({ from: cur }, ver)] });
       } else {
         var n = clone(hb); n.name = name; n.unit = f.type === 'number' || f.period !== 'daily' ? f.unit.trim() : n.unit;
-        var same = ver.goal === c.goal && ver.period === c.period && ver.method === c.method && ver.weight === c.weight && (ver.basis || 'total') === (c.basis || 'total');
+        var same = ver.goal === c.goal && ver.period === c.period && ver.method === c.method && ver.weight === c.weight && (ver.basis || 'total') === (c.basis || 'total') && (ver.dir || 'min') === (c.dir || 'min');
         if (!same) {
           if (f.scope === 'fix') n.versions = [Object.assign({ from: n.versions.reduce(function (m, v) { return v.from < m ? v.from : m; }, n.versions[0].from) }, ver)];
           else {
