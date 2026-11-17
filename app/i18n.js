@@ -1,6 +1,11 @@
 /* UI strings. {x} placeholders are filled by t(). */
 var I18N = {
   es: {
+    goalAvgWeekly: 'media {n}/día · cada semana', goalAvgMonthly: 'media {n}/día · cada mes', avgOf: 'media {a} / {b} al día',
+    fBasis: 'El objetivo es', bTotal: 'Total', bAvg: 'Media diaria', fGoalAvg: 'Media por día',
+    bTotalHelpW: 'La suma de la semana, por ejemplo 150 min de bici.', bTotalHelpM: 'La suma del mes, por ejemplo 40 km.',
+    bAvgHelpW: 'Una media por día dentro de cada semana, por ejemplo 8 h de sueño: una noche larga compensa una corta de la misma semana, pero no de otra.',
+    bAvgHelpM: 'Una media por día dentro del mes: un día largo compensa uno corto del mismo mes.',
     weekly: 'Semanales', thisWeekLc: 'esta semana', timesWord: 'veces', goalWeekly: 'objetivo {n}/semana', weeklyGoalShort: 'meta semanal',
     pWeekly: 'Semanal', pWeeklyHelp: 'Una meta para cada semana (lunes a domingo), por ejemplo 3 sesiones. Cada semana cuenta por sí sola: lo que te pases una semana no compensa otra.',
     fGoalWeek: 'Objetivo de la semana', unitTimesPh: 'sesiones, veces…',
@@ -60,6 +65,11 @@ var I18N = {
     noStorage: 'Este navegador no permite guardar datos. Tus cambios se perderán al cerrar la pestaña.', updateReady: 'Hay una versión nueva', updateNow: 'Actualizar'
   },
   en: {
+    goalAvgWeekly: 'avg {n}/day · each week', goalAvgMonthly: 'avg {n}/day · each month', avgOf: 'avg {a} / {b} a day',
+    fBasis: 'The goal is', bTotal: 'Total', bAvg: 'Daily average', fGoalAvg: 'Average per day',
+    bTotalHelpW: 'The sum for the week, for example 150 min of cycling.', bTotalHelpM: 'The sum for the month, for example 40 km.',
+    bAvgHelpW: 'An average per day within each week, for example 8 h of sleep: a long night covers a short one in the same week, but not in another.',
+    bAvgHelpM: 'An average per day within the month: a long day covers a short one in the same month.',
     weekly: 'Weekly', thisWeekLc: 'this week', timesWord: 'times', goalWeekly: 'goal {n}/week', weeklyGoalShort: 'weekly goal',
     pWeekly: 'Weekly', pWeeklyHelp: 'A goal for each week (Monday to Sunday), for example 3 sessions. Each week stands on its own: going over one week does not cover another.',
     fGoalWeek: 'Goal for the week', unitTimesPh: 'sessions, times…',

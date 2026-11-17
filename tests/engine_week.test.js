@@ -95,5 +95,38 @@ const pr = pend.find(p => p.id === 'run');
 eq('pending weekly', pr && pr.kind === 'wpace' ? 1 : 0, 1);
 eq('pending weekly bike on pace', pend.find(p => p.id === 'min') ? 1 : 0, 0);
 
+// ---------- weekly/monthly goal as a daily average (basis 'avg') ----------
+const sa = JSON.parse(JSON.stringify(st)); sa.logs = {};
+sa.habits.zz = { id: 'zz', name: 'Sueño', type: 'number', unit: 'h', order: 7, created: '2026-10-01', versions: [{ from: '2026-10', goal: 8, period: 'weekly', method: 'strict', basis: 'avg', weight: 1 }] };
+const la = (d, v) => { (sa.logs[d] = sa.logs[d] || {}).zz = v; };
+la('2026-11-09', 9); la('2026-11-10', 6); la('2026-11-11', 8);   // 23 h in 3 days, goal 24
+r = E.weeklyHabitWeek(sa, sa.habits.zz, '2026-11-09', '2026-11-11');
+eq('avg weekly pct', r.pct, 23 / 24); eq('avg weekly avg', r.avg, 23 / 3); eq('avg weekly target', r.target, 56); eq('avg weekly pace', r.pace, 24);
+w = E.weekStats(sa, '2026-11-09', '2026-11-11');
+const za = w.habits.find(h => h.id === 'zz');
+eq('weekStats avg basis', za.basis === 'avg' ? 1 : 0, 1); eq('weekStats avg missing', za.missing, 56 - 23);
+// a long night next week does not cover this week (each week stands alone in the month)
+la('2026-11-16', 16);
+mh = E.monthStats(sa, '2026-11', '2026-11-17').habits.find(h => h.id === 'zz');
+// Nov 1 (week of Oct 26: 0 h) 0; Nov 2-8 (0 h) 0; Nov 9-15: 23/(8*7)=0.4107; Nov 16-17 (as of 17th): 16/16=1
+eq('avg month day-weighted', mh.pct, (7 * (23 / 56) + 2 * 1) / 17);
+eq('avg month target', mh.target, 8 * 30);
+// monthly goal as average: 8 h/day, 17 days elapsed -> pace 136
+const sm2 = JSON.parse(JSON.stringify(sa)); sm2.habits.zz.versions[0].period = 'monthly';
+mh = E.monthStats(sm2, '2026-11', '2026-11-17').habits.find(h => h.id === 'zz');
+eq('avg monthly pct', mh.pct, 39 / 136); eq('avg monthly target', mh.target, 240);
+let pm = E.pendingToday(sm2, '2026-11-17').find(p => p.id === 'zz');
+eq('avg monthly pending total', pm.total, 39); eq('avg monthly pending goal is month total', pm.goal, 240);
+// monthly average counts from the day the habit was created
+const sm3 = JSON.parse(JSON.stringify(sm2)); sm3.habits.zz.created = '2026-11-16'; sm3.habits.zz.versions[0].from = '2026-11';
+sm3.logs = {}; (sm3.logs['2026-11-16'] = {}).zz = 7; (sm3.logs['2026-11-17'] = {}).zz = 8.5;
+mh = E.monthStats(sm3, '2026-11', '2026-11-17').habits.find(h => h.id === 'zz');
+eq('avg monthly from creation: avg', mh.avg, 7.75); eq('avg monthly from creation: pct', mh.pct, 15.5 / 16); eq('avg monthly from creation: target', mh.target, 8 * 15);
+pm = E.pendingToday(sm3, '2026-11-17').find(p => p.id === 'zz');
+eq('avg monthly from creation: pending', pm ? pm.total : null, 15.5);
+// default basis is still a total
+const st2 = JSON.parse(JSON.stringify(sa)); delete st2.habits.zz.versions[0].basis; st2.habits.zz.versions[0].goal = 56;
+eq('total basis same as avg*7', E.weeklyHabitWeek(st2, st2.habits.zz, '2026-11-09', '2026-11-11').pct, 23 / 24);
+
 console.log(`${checks} checks, ${fails} failures`);
 process.exit(fails ? 1 : 0);
