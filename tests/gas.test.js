@@ -66,6 +66,7 @@ rp({ since: 0, push: [
   { k: 'h:b', v: { name: 'Flexiones', type: 'number', unit: 'reps', order: 2, versions: ver(50, 'daily', 'average', 1) }, t: 1 },
   { k: 'h:c', v: { name: 'Sueño', type: 'number', unit: 'h', order: 3, versions: ver(8, 'daily', 'strict', 1) }, t: 1 },
   { k: 'h:d', v: { name: 'Gimnasio', type: 'check', unit: 'sesiones', order: 4, versions: ver(12, 'monthly', 'strict', 1) }, t: 1 },
+  { k: 'h:e', v: { name: 'Correr', type: 'check', unit: 'veces', order: 5, versions: ver(3, 'weekly', 'strict', 1) }, t: 1 },
   { k: 'l:2026-11-08:c', v: 6, t: 2 }, { k: 'l:2026-11-08:b', v: 20, t: 2 }, { k: 'l:2026-11-01:d', v: true, t: 2 }
 ] });
 let res = R.run('sendDailyReminder()');
@@ -77,10 +78,12 @@ ok('lists unchecked habit', /\[ \] Meditar/.test(mail.body));
 ok('lists number below goal', /Sueño: 6 \/ 8 h/.test(mail.body));
 ok('average habit shows catch-up', /Flexiones: te faltan 380 reps para ir al día/.test(mail.body), mail.body);
 ok('monthly below pace', /Gimnasio: 1 \/ 12 sesiones este mes \(por debajo del ritmo\)/.test(mail.body), mail.body);
-ok('subject counts', /Te quedan 4 hábitos hoy/.test(mail.subject), mail.subject);
+ok('weekly below pace', /Correr: 0 \/ 3 veces esta semana \(por debajo del ritmo\)/.test(mail.body), mail.body);
+ok('subject counts', /Te quedan 5 hábitos hoy/.test(mail.subject), mail.subject);
 // complete everything -> no mail
 rp({ since: 0, push: [{ k: 'l:2026-11-08:a', v: true, t: 5 }, { k: 'l:2026-11-08:b', v: 400, t: 5 }, { k: 'l:2026-11-08:c', v: 8, t: 5 }, { k: 'l:2026-11-08:d', v: true, t: 5 },
-  ...Array.from({ length: 7 }, (_, i) => ({ k: 'l:2026-11-0' + (i + 2) + ':d', v: true, t: 5 })) ] });
+  ...Array.from({ length: 7 }, (_, i) => ({ k: 'l:2026-11-0' + (i + 2) + ':d', v: true, t: 5 })),
+  ...['02', '04', '06'].map(d => ({ k: 'l:2026-11-' + d + ':e', v: true, t: 5 })) ] });
 // flexiones: 20 -> 400 on day 8 means total 400 >= 50*8
 R.state.mails.length = 0;
 res = R.run('sendDailyReminder()');

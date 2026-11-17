@@ -1,6 +1,9 @@
 /* UI strings. {x} placeholders are filled by t(). */
 var I18N = {
   es: {
+    weekly: 'Semanales', thisWeekLc: 'esta semana', timesWord: 'veces', goalWeekly: 'objetivo {n}/semana', weeklyGoalShort: 'meta semanal',
+    pWeekly: 'Semanal', pWeeklyHelp: 'Una meta para cada semana (lunes a domingo), por ejemplo 3 sesiones. Cada semana cuenta por sí sola: lo que te pases una semana no compensa otra.',
+    fGoalWeek: 'Objetivo de la semana', unitTimesPh: 'sesiones, veces…',
     tabWeek: 'Semana', thisWeek: 'Esta semana', weekOf: 'Semana del {d}', backThisWeek: 'Volver a esta semana', prevWeek: 'Semana anterior', nextWeek: 'Semana siguiente',
     weekSoFar: 'Esta semana', weightedWeek: 'cumplimiento ponderado de la semana', noHabitsWeek: 'No había hábitos diarios activos esta semana.',
     vsLastWeek: '{d} puntos respecto a la semana anterior', daysMet: '{a} de {b} días cumplidos', weekMissing: 'faltan {n} para ir al día', cWeeks: 'Cumplimiento por semana', week: 'Semana',
@@ -57,6 +60,9 @@ var I18N = {
     noStorage: 'Este navegador no permite guardar datos. Tus cambios se perderán al cerrar la pestaña.', updateReady: 'Hay una versión nueva', updateNow: 'Actualizar'
   },
   en: {
+    weekly: 'Weekly', thisWeekLc: 'this week', timesWord: 'times', goalWeekly: 'goal {n}/week', weeklyGoalShort: 'weekly goal',
+    pWeekly: 'Weekly', pWeeklyHelp: 'A goal for each week (Monday to Sunday), for example 3 sessions. Each week stands on its own: going over one week does not cover another.',
+    fGoalWeek: 'Goal for the week', unitTimesPh: 'sessions, times…',
     tabWeek: 'Week', thisWeek: 'This week', weekOf: 'Week of {d}', backThisWeek: 'Back to this week', prevWeek: 'Previous week', nextWeek: 'Next week',
     weekSoFar: 'This week', weightedWeek: 'weighted score for the week', noHabitsWeek: 'There were no active daily habits this week.',
     vsLastWeek: '{d} points vs last week', daysMet: 'goal met {a} of {b} days', weekMissing: '{n} short of pace', cWeeks: 'Adherence by week', week: 'Week',

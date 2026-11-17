@@ -112,10 +112,15 @@
           t('monthSoFar') + ': ', h('strong', { text: pc(ms.weighted) })))));
 
     var dailyRows = act.filter(function (a) { return a.c.period === 'daily'; });
+    var weekRows = act.filter(function (a) { return a.c.period === 'weekly'; });
     var monthRows = act.filter(function (a) { return a.c.period === 'monthly'; });
     if (dailyRows.length) {
       root.appendChild(h('h2', { class: 'sect', text: t('daily') }));
       root.appendChild(h('div', { class: 'list' }, dailyRows.map(function (a) { return habitRow(a, date, by[a.h.id], mk); })));
+    }
+    if (weekRows.length) {
+      root.appendChild(h('h2', { class: 'sect', text: t('weekly') }));
+      root.appendChild(h('div', { class: 'list' }, weekRows.map(function (a) { return habitRow(a, date, by[a.h.id], mk); })));
     }
     if (monthRows.length) {
       root.appendChild(h('h2', { class: 'sect', text: t('monthly') }));
@@ -136,9 +141,15 @@
   function habitRow(a, date, bm, mk) {
     var st = S.state(), hb = a.h, c = a.c, v = E.val(st, date, hb.id), id = hb.id;
     var isCur = mk === E.monthKey(today);
+    if (c.period === 'weekly') {                       // judge against the week of the shown date
+      var wr = E.weeklyHabitWeek(st, hb, E.weekStart(date), date < today ? E.addDays(E.weekStart(date), 6) : today);
+      bm = { total: E.clean(wr.total), pct: wr.pct };
+      isCur = E.weekStart(date) === E.weekStart(today);
+    }
+    var periodWord = c.period === 'weekly' ? t('thisWeekLc') : t('thisMonth');
     if (hb.type === 'check') {
       var on = v === true, sub = '';
-      if (c.period === 'monthly') sub = nf(bm.total) + ' / ' + nf(c.goal) + (hb.unit ? ' ' + hb.unit : '') + ' ' + t('thisMonth');
+      if (c.period !== 'daily') sub = nf(bm.total) + ' / ' + nf(c.goal) + (hb.unit ? ' ' + hb.unit : '') + ' ' + periodWord;
       else { var sk = E.habitStreak(st, id, today); if (sk >= 2 && date === today) sub = t('streakShort', { n: sk }); }
       return h('button', {
         class: 'row check' + (on ? ' on' : ''), role: 'checkbox', 'aria-checked': on ? 'true' : 'false',
@@ -152,7 +163,7 @@
     var x = typeof v === 'number' ? v : 0, step = hb.step || E.stepFor(c.goal);
     var fill = c.period === 'daily' ? Math.min(1, x / c.goal) : (bm.pct === null ? 0 : bm.pct);
     var sub2 = '';
-    if (c.period === 'monthly') sub2 = nf(bm.total) + ' / ' + nf(c.goal) + (hb.unit ? ' ' + hb.unit : '') + ' ' + t('thisMonth');
+    if (c.period !== 'daily') sub2 = nf(bm.total) + ' / ' + nf(c.goal) + (hb.unit ? ' ' + hb.unit : '') + ' ' + periodWord;
     else if (c.method === 'average' && isCur) {
       var miss = c.goal * E.elapsedDays(mk, today) - bm.total;
       sub2 = miss > 0.0001 ? t('behind', { n: nf(Math.round(miss * 100) / 100), u: hb.unit || '' }) : t('onTrack');
@@ -170,7 +181,7 @@
   }
 
   function monthBadge(c, bm, isCur) {
-    if (c.period !== 'monthly' || !isCur || bm.pct === null) return null;
+    if (c.period === 'daily' || !isCur || bm.pct === null) return null;
     var behind = bm.pct < 1 - 1e-9;
     return h('span', { class: 'badge ' + (behind ? 'warn' : 'ok'), text: behind ? t('belowPace') : t('onPace') });
   }
@@ -198,6 +209,8 @@
   }
   function weekHabitSub(x) {
     var u = x.unit ? ' ' + x.unit : '', r2 = function (n) { return nf(Math.round(n * 100) / 100); };
+    if (x.period === 'weekly') return r2(x.total) + ' / ' + r2(x.goal) + (x.unit ? u : x.type === 'check' ? ' ' + t('timesWord') : '') + ' · ' +
+      (x.pct === null ? '' : x.pct >= 1 - 1e-9 ? (x.total >= x.goal ? t('goalMet') : t('onPace')) : t('belowPace'));
     if (x.type === 'check') return t('daysMet', { a: x.met, b: x.days });
     var s = r2(x.total) + ' / ' + r2(x.target) + u + ' · ' + t('avgDay', { n: r2(x.avg) + u });
     if (x.method === 'average') s += ' · ' + (x.missing > 0.0001 ? t('weekMissing', { n: r2(x.missing) + u }) : t('onTrack'));
@@ -278,7 +291,7 @@
     root.appendChild(h('h2', { class: 'sect', text: t('byHabit') }));
     root.appendChild(h('div', { class: 'card' }, ms.habits.map(function (x) {
       var tot = x.type === 'check' && x.period === 'daily' ? nf(x.total) + ' ' + t('daysWord') : nf(x.total) + (x.unit ? ' ' + x.unit : '');
-      var tgt = x.period === 'monthly' ? ' / ' + nf(x.goal) : '';
+      var tgt = x.period === 'monthly' ? ' / ' + nf(x.goal) : x.period === 'weekly' ? ' · ' + t('goalWeekly', { n: nf(x.goal) + (x.unit ? ' ' + x.unit : '') }) : '';
       return h('div', { class: 'hline' },
         h('div', { class: 'hl-top' }, h('span', { class: 'hl-name', text: x.name }), h('span', { class: 'hl-pct', text: pc(x.pct) })),
         h('div', { class: 'bar' + (x.pct !== null && x.pct < 0.4 ? ' low' : '') }, h('i', { style: 'width:' + Math.round((x.pct || 0) * 100) + '%' })),
@@ -411,7 +424,7 @@
     var c = E.cfgFor(hb, E.monthKey(d));
     if (!c || +d.slice(8, 10) < E.startDay(st, hb, E.monthKey(d))) return null;
     var v = E.val(st, d, hb.id);
-    if (c.period === 'monthly') return v === true || (typeof v === 'number' && v > 0) ? 1 : 0;
+    if (c.period !== 'daily') return v === true || (typeof v === 'number' && v > 0) ? 1 : 0;
     if (hb.type === 'check') return v === true ? 1 : 0;
     return c.goal > 0 ? Math.min(1, (typeof v === 'number' ? v : 0) / c.goal) : 0;
   }
@@ -425,21 +438,21 @@
     var cur = E.monthKey(today), px = null;
     ps.habits.forEach(function (x) { if (x.id === hb.id) px = x; });
     var cfg = E.cfgFor(hb, range[1]) || E.cfgFor(hb, cur) || hb.versions[hb.versions.length - 1];
-    var u = hb.unit ? ' ' + hb.unit : '', isCheck = hb.type === 'check', monthly = cfg.period === 'monthly';
+    var u = hb.unit ? ' ' + hb.unit : '', isCheck = hb.type === 'check', monthly = cfg.period === 'monthly', weekly = cfg.period === 'weekly';
     var r2 = function (x) { return nf(Math.round(x * 100) / 100); };
-    var streak = monthly ? null : E.habitStreak(st, hb.id, today);
+    var streak = monthly || weekly ? null : E.habitStreak(st, hb.id, today);
     var unitTxt = isCheck && !hb.unit ? t('daysWord') : (hb.unit || '');
 
     root.appendChild(h('section', { class: 'kpis' },
       kpi(t('kAdherence'), pc(px ? px.pct : null), px ? px.pct : null),
-      kpi(t('kStreak'), streak === null ? '–' : String(streak), null, streak === null ? t('monthlyGoalShort') : streakWord(streak).replace(String(streak), '').trim()),
+      kpi(t('kStreak'), streak === null ? '–' : String(streak), null, streak === null ? (weekly ? t('weeklyGoalShort') : t('monthlyGoalShort')) : streakWord(streak).replace(String(streak), '').trim()),
       kpi(t('kTotal'), px ? r2(px.total) : '–', null, unitTxt),
       kpi(t('kAvg'), px ? r2(px.avg) : '–', null, unitTxt ? unitTxt + '/' + t('dayShort') : '')));
 
     if (!monthly) add(root, weeksChart('hweeks', st, function (wk) {
       var x = null; wk.habits.forEach(function (y) { if (y.id === hb.id) x = y; });
       if (!x || x.pct === null) return null;
-      return { value: x.pct, extra: isCheck ? ' · ' + t('daysMet', { a: x.met, b: x.days }) : ' · ' + t('avgDay', { n: r2(x.avg) + u }) };
+      return { value: x.pct, extra: x.period === 'weekly' ? ' · ' + r2(x.total) + ' / ' + r2(x.goal) + u : isCheck ? ' · ' + t('daysMet', { a: x.met, b: x.days }) : ' · ' + t('avgDay', { n: r2(x.avg) + u }) };
     }));
 
     // adherence by month for this habit
@@ -470,7 +483,7 @@
           ditems.push({ label: String(d.day), value: d.future ? null : cr, tip: dfmt(d.date, { day: 'numeric', month: 'short' }) + ': ' + nf(Math.round(cum * 100) / 100) + ' / ' + nf(c.goal) + u });
           line.push(d.day / lm.dim);
         } else {
-          ditems.push({ label: String(d.day), value: ratio, tip: dfmt(d.date, { weekday: 'short', day: 'numeric', month: 'short' }) + ': ' + (d.future ? '' : habitValueText(st, hb, d.date) + (hb.type === 'number' ? ' (' + pc(ratio) + ')' : '')) });
+          ditems.push({ label: String(d.day), value: ratio, tip: dfmt(d.date, { weekday: 'short', day: 'numeric', month: 'short' }) + ': ' + (d.future ? '' : habitValueText(st, hb, d.date) + (hb.type === 'number' && c.period === 'daily' ? ' (' + pc(ratio) + ')' : '')) });
         }
         if (!d.future) rows.push([dfmt(d.date, { day: 'numeric', month: 'short' }), c.period === 'monthly' ? nf(Math.round(cum * 100) / 100) + ' / ' + nf(c.goal) + u : habitValueText(st, hb, d.date)]);
       });
@@ -485,7 +498,7 @@
         tableOf([t('day'), t('value')], rows),
         c.period === 'monthly'
           ? h('div', { class: 'legend' }, h('span', { class: 'lg bar-lg' }, t('lgCum')), h('span', { class: 'lg line-lg' }, t('lgPace')))
-          : h('div', { class: 'legend' }, h('span', { class: 'lg bar-lg' }, hb.type === 'check' ? t('lgDone') : t('lgOfGoal')), h('span', { class: 'lg line-lg' }, t('lgAvg')))));
+          : h('div', { class: 'legend' }, h('span', { class: 'lg bar-lg' }, hb.type === 'check' || c.period === 'weekly' ? t('lgDone') : t('lgOfGoal')), h('span', { class: 'lg line-lg' }, t('lgAvg')))));
     }
 
     // heatmap for this habit
@@ -505,8 +518,8 @@
 
     // habit settings in force
     var cfgTxt = (isCheck ? t('typeCheck') : t('typeNumber')) + ' · ' +
-      (monthly ? t('goalMonthly', { n: nf(cfg.goal) + u }) : (isCheck ? t('everyDay') : t('goalDaily', { n: nf(cfg.goal) + u }))) +
-      (!isCheck && !monthly ? ' · ' + (cfg.method === 'average' ? t('mAverage') : t('mStrict')) : '') + ' · ' + t('weightShort', { n: nf(cfg.weight) });
+      (monthly ? t('goalMonthly', { n: nf(cfg.goal) + u }) : weekly ? t('goalWeekly', { n: nf(cfg.goal) + u }) : (isCheck ? t('everyDay') : t('goalDaily', { n: nf(cfg.goal) + u }))) +
+      (!isCheck && cfg.period === 'daily' ? ' · ' + (cfg.method === 'average' ? t('mAverage') : t('mStrict')) : '') + ' · ' + t('weightShort', { n: nf(cfg.weight) });
     root.appendChild(h('p', { class: 'muted rangeline', text: cfgTxt }));
   }
 
@@ -550,7 +563,7 @@
     else root.appendChild(h('div', { class: 'card' }, activeList.map(function (hb, i) {
       var c = E.cfgFor(hb, cur);
       var desc = (hb.type === 'check' ? t('typeCheck') : t('typeNumber')) + ' · ' +
-        (c.period === 'monthly' ? t('goalMonthly', { n: nf(c.goal) + (hb.unit ? ' ' + hb.unit : '') }) : (hb.type === 'number' ? t('goalDaily', { n: nf(c.goal) + (hb.unit ? ' ' + hb.unit : '') }) : t('everyDay'))) +
+        (c.period === 'monthly' ? t('goalMonthly', { n: nf(c.goal) + (hb.unit ? ' ' + hb.unit : '') }) : c.period === 'weekly' ? t('goalWeekly', { n: nf(c.goal) + (hb.unit ? ' ' + hb.unit : '') }) : (hb.type === 'number' ? t('goalDaily', { n: nf(c.goal) + (hb.unit ? ' ' + hb.unit : '') }) : t('everyDay'))) +
         (hb.type === 'number' && c.period === 'daily' ? ' · ' + (c.method === 'average' ? t('mAverage') : t('mStrict')) : '') + ' · ' + t('weightShort', { n: nf(c.weight) });
       return h('div', { class: 'hrow' },
         h('div', { class: 'hr-main' }, h('div', { class: 'hr-name', text: hb.name }), h('div', { class: 'hr-sub muted', text: desc })),
@@ -622,10 +635,11 @@
       body.appendChild(field(t('fName'), nameIn, 'f-name'));
       body.appendChild(field(t('fType'), seg('type', [['check', t('typeCheck')], ['number', t('typeNumber')]], !!hb), null, hb ? t('typeLocked') : t('typeHelp')));
       if (f.type === 'number') body.appendChild(field(t('fUnit'), h('input', { class: 'inp', id: 'f-unit', type: 'text', value: f.unit, maxlength: '12', placeholder: 'reps, h, L…', oninput: function (e) { f.unit = e.target.value; } }), 'f-unit'));
-      body.appendChild(field(t('fPeriod'), seg('period', [['daily', t('pDaily')], ['monthly', t('pMonthly')]]), null, f.period === 'monthly' ? t('pMonthlyHelp') : t('pDailyHelp')));
-      if (f.type === 'number' || f.period === 'monthly') {
+      body.appendChild(field(t('fPeriod'), seg('period', [['daily', t('pDaily')], ['weekly', t('pWeekly')], ['monthly', t('pMonthly')]]), null, f.period === 'monthly' ? t('pMonthlyHelp') : f.period === 'weekly' ? t('pWeeklyHelp') : t('pDailyHelp')));
+      if (f.type === 'check' && f.period !== 'daily') body.appendChild(field(t('fUnit'), h('input', { class: 'inp', id: 'f-unit', type: 'text', value: f.unit, maxlength: '12', placeholder: t('unitTimesPh'), oninput: function (e) { f.unit = e.target.value; } }), 'f-unit'));
+      if (f.type === 'number' || f.period !== 'daily') {
         var goalIn = h('input', { class: 'inp', id: 'f-goal', type: 'text', inputmode: 'decimal', value: String(f.goal).replace('.', lang === 'es' ? ',' : '.'), oninput: function (e) { f.goalRaw = e.target.value; } });
-        body.appendChild(field(f.period === 'monthly' ? t('fGoalMonth') : t('fGoalDay'), goalIn, 'f-goal'));
+        body.appendChild(field(f.period === 'monthly' ? t('fGoalMonth') : f.period === 'weekly' ? t('fGoalWeek') : t('fGoalDay'), goalIn, 'f-goal'));
       }
       if (f.type === 'number' && f.period === 'daily') {
         body.appendChild(field(t('fMethod'), seg('method', [['strict', t('mStrict')], ['average', t('mAverage')]]), null, f.method === 'average' ? t('mAverageHelp') : t('mStrictHelp')));
@@ -665,7 +679,7 @@
       var ver = { goal: goal, period: f.period, method: method, weight: weight };
       if (!hb) {
         var all = E.sortedHabits(st), order = all.length ? all[all.length - 1].order + 1 : 1;
-        S.putHabit({ id: newId(), name: name, type: f.type, unit: f.type === 'number' ? f.unit.trim() : (f.period === 'monthly' ? f.unit.trim() : ''), order: order, created: today, archivedFrom: null, versions: [Object.assign({ from: cur }, ver)] });
+        S.putHabit({ id: newId(), name: name, type: f.type, unit: f.type === 'number' ? f.unit.trim() : (f.period !== 'daily' ? f.unit.trim() : ''), order: order, created: today, archivedFrom: null, versions: [Object.assign({ from: cur }, ver)] });
       } else {
         var n = clone(hb); n.name = name; n.unit = f.type === 'number' ? f.unit.trim() : n.unit;
         var same = ver.goal === c.goal && ver.period === c.period && ver.method === c.method && ver.weight === c.weight;

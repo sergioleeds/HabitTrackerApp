@@ -177,6 +177,7 @@ function reminderLines_(pending) {
     if (p.kind === 'check') return '[ ] ' + p.name;
     if (p.kind === 'number') return p.name + ': ' + p.value + ' / ' + p.goal + u;
     if (p.kind === 'behind') return p.name + (es ? ': te faltan ' : ': ') + p.missing + u + (es ? ' para ir al día' : ' to catch up');
+    if (p.kind === 'wpace') return p.name + ': ' + p.total + ' / ' + p.goal + u + (es ? ' esta semana (por debajo del ritmo)' : ' this week (behind pace)');
     return p.name + ': ' + p.total + ' / ' + p.goal + u + (es ? ' este mes (por debajo del ritmo)' : ' this month (behind pace)');
   });
 }

@@ -2,6 +2,8 @@
  * Same rules as HabitTracker_v2.gs:
  *  - Daily habits feed the day score (weighted). Monthly habits are judged against a pace.
  *  - Weeks run Monday to Sunday and judge daily habits with the same rules as a month.
+ *  - Weekly habits (goal per week) are judged against the week's pace; in a month each day
+ *    gets the result of its own week, so a big week does not cover a missed one.
  *  - Numbers: "strict" caps each day at the goal, "average" lets a big day cover missed ones.
  *  - Streaks: day score >= threshold (overall) or goal met (per habit); today may still be open.
  * Dates are 'YYYY-MM-DD' strings, months are 'YYYY-MM'. Works in browser, Node and Apps Script. */
@@ -117,9 +119,26 @@
     return +today.slice(8, 10);
   }
 
+  // ---------- weekly-goal habits ----------
+  /** One weekly habit over the week starting ws (Monday): total and pace-based pct up to today. */
+  function weeklyHabitWeek(state, h, ws, today) {
+    var tot = 0, n = 0, c = null, i, d, cc, v;
+    for (i = 0; i < 7; i++) {
+      d = addDays(ws, i);
+      if (d > today) break;
+      cc = cfgFor(h, monthKey(d));
+      if (!cc || cc.period !== 'weekly' || +d.slice(8, 10) < startDay(state, h, monthKey(d))) continue;
+      c = cc; n++;
+      v = val(state, d, h.id);
+      tot += h.type === 'check' ? (v === true ? 1 : 0) : num(v);
+    }
+    if (!c || !(c.goal > 0)) return { total: tot, days: n, goal: c ? c.goal : 0, pct: null };
+    return { total: tot, days: n, goal: c.goal, pct: Math.min(1, tot / (c.goal * n / 7)) };
+  }
+
   function habitMonth(state, a, mk, today) {
     var h = a.h, c = a.c, dim = daysInMonth(mk), el = elapsedDays(mk, today), i, d, v;
-    var sd = c.period === 'daily' ? startDay(state, h, mk) : 1;       // daily habits count from their first day
+    var sd = c.period !== 'monthly' ? startDay(state, h, mk) : 1;     // daily/weekly habits count from their first day
     var el2 = Math.max(0, el - sd + 1), dim2 = dim - sd + 1;
     var tot = 0, capped = 0;
     for (i = 1; i <= dim; i++) {
@@ -134,6 +153,18 @@
     if (c.period === 'monthly') {
       target = c.goal;
       if (el > 0) pct = Math.min(1, tot / (c.goal * el / dim));
+    } else if (c.period === 'weekly') {
+      target = c.goal * dim2 / 7;
+      if (el2 > 0) {                                                  // each elapsed day takes its week's result
+        var sum = 0, n = 0, ws = null, wr = null;
+        for (i = sd; i <= el; i++) {
+          d = mk + '-' + pad(i);
+          var w0 = weekStart(d);
+          if (w0 !== ws) { ws = w0; wr = weeklyHabitWeek(state, h, ws, today); }
+          if (wr.pct !== null) { sum += wr.pct; n++; }
+        }
+        pct = n ? sum / n : null;
+      }
     } else if (h.type === 'check') {
       target = dim2;
       if (el2 > 0) pct = Math.min(1, tot / el2);
@@ -144,7 +175,7 @@
         else pct = capped / (c.goal * el2);
       }
     }
-    var span = c.period === 'daily' ? el2 : el;
+    var span = c.period !== 'monthly' ? el2 : el;
     return {
       id: h.id, name: h.name, type: h.type, unit: h.unit || '', goal: c.goal, period: c.period,
       method: c.method, weight: c.weight, total: tot, target: target, pct: pct,
@@ -172,7 +203,8 @@
   function weekStart(d) { return addDays(d, -((weekday(d) + 6) % 7)); }
 
   /** Daily habits judged over one week, same rules as a month: strict caps each day at its goal,
-   *  average lets a big day cover a short one. Monthly-goal habits are left out (they have no weekly goal).
+   *  average lets a big day cover a short one. Weekly-goal habits are judged against the week's pace.
+   *  Monthly-goal habits are left out (they have no weekly goal).
    *  A week can span two months: each day uses the config of its own month. */
   function weekStats(state, ws, today) {
     ws = weekStart(ws);
@@ -195,9 +227,25 @@
         else { p.total += num(v); p.capped += Math.min(num(v), a.c.goal); }
       });
     }
+    var last = today < ws ? null : (today > we ? we : today);
+    if (last) activeIn(state, monthKey(last)).concat(monthKey(ws) !== monthKey(last) ? activeIn(state, monthKey(ws)) : []).forEach(function (a) {
+      if (a.c.period !== 'weekly' || per[a.h.id]) return;
+      var r = weeklyHabitWeek(state, a.h, ws, today);
+      if (!r.days) return;
+      per[a.h.id] = { h: a.h, c: a.c, weekly: r }; order.push(a.h.id);
+    });
     var sw = 0, sp = 0;
     var habits = order.map(function (id) {
       var p = per[id], h = p.h, c = p.c, pct = null;
+      if (p.weekly) {
+        var r = p.weekly;
+        if (r.pct !== null) { sw += +c.weight || 0; sp += (+c.weight || 0) * r.pct; }
+        return {
+          id: id, name: h.name, type: h.type, unit: h.unit || '', goal: r.goal, period: 'weekly', method: c.method, weight: c.weight,
+          total: r.total, target: r.goal, pct: r.pct, days: r.days, avg: r.days ? r.total / r.days : 0,
+          missing: Math.max(0, r.goal - r.total), pace: r.goal * r.days / 7
+        };
+      }
       if (p.goalSum > 0) pct = h.type === 'number' && c.method === 'average' ? Math.min(1, p.total / p.goalSum) : p.capped / p.goalSum;
       if (pct !== null) { sw += +c.weight || 0; sp += (+c.weight || 0) * pct; }
       return {
@@ -325,6 +373,9 @@
       if (a.c.period === 'monthly') {
         var pace = a.c.goal * elapsedDays(mk, today) / daysInMonth(mk);
         if (hm.total < pace - 1e-9) out.push({ id: a.h.id, name: a.h.name, kind: 'pace', total: hm.total, goal: a.c.goal, unit: a.h.unit || '' });
+      } else if (a.c.period === 'weekly') {
+        var wr = weeklyHabitWeek(state, a.h, weekStart(today), today);
+        if (wr.pct !== null && wr.pct < 1 - 1e-9) out.push({ id: a.h.id, name: a.h.name, kind: 'wpace', total: clean(wr.total), goal: a.c.goal, unit: a.h.unit || '' });
       } else if (a.h.type === 'check') {
         if (v !== true) out.push({ id: a.h.id, name: a.h.name, kind: 'check' });
       } else if (a.c.method === 'average') {
@@ -353,7 +404,7 @@
     pad: pad, addDays: addDays, monthKey: monthKey, addMonths: addMonths, daysInMonth: daysInMonth,
     monthStart: monthStart, monthEnd: monthEnd, localToday: localToday, monthsBetween: monthsBetween,
     weekday: weekday, cfgFor: cfgFor, sortedHabits: sortedHabits, activeIn: activeIn, firstMonth: firstMonth,
-    dayScore: dayScore, monthStats: monthStats, elapsedDays: elapsedDays, weekStart: weekStart, weekStats: weekStats,
+    dayScore: dayScore, monthStats: monthStats, elapsedDays: elapsedDays, weekStart: weekStart, weekStats: weekStats, weeklyHabitWeek: weeklyHabitWeek,
     overallStreak: overallStreak, habitStreak: habitStreak, overallStreakAt: overallStreakAt, habitStreakAt: habitStreakAt,
     periodRange: periodRange, periodStats: periodStats, pendingToday: pendingToday, stepFor: stepFor, clean: clean,
     val: val, met: met, hasLogs: hasLogs, startDay: startDay
