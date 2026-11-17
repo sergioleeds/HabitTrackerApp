@@ -49,7 +49,7 @@
   function cap(s) { return s.charAt(0).toUpperCase() + s.slice(1); }
   function newId() { return 'h' + Math.random().toString(36).slice(2, 9); }
 
-  var ui = { tab: 'today', date: null, week: null, month: null, period: '3', habit: 'all', chosen: null, tables: {}, editing: null };
+  var ui = { tab: 'today', date: null, week: null, month: null, period: 'month', anchor: null, habit: 'all', tables: {}, editing: null };
   var draws = [], today = E.localToday();
   var view, tip, toastEl, installEvt = null;
 
@@ -284,19 +284,6 @@
     return root;
   }
 
-  /** Last 12 weeks as chart items; pick(weekStats) returns {value, extra} or null. */
-  function weeksChart(key, st, pick) {
-    var cw = E.weekStart(today), items = [];
-    for (var i = 11; i >= 0; i--) {
-      var ws = E.addDays(cw, -7 * i), wk = E.weekStats(st, ws, today), r = pick(wk);
-      items.push({ label: dfmt(ws, { day: 'numeric', month: 'numeric' }), value: r ? r.value : null, current: ws === cw,
-        tip: t('weekOf', { d: dfmt(ws, { day: 'numeric', month: 'short' }) }) + ': ' + (r ? pc(r.value) + (r.extra || '') : t('noData')) });
-    }
-    if (!items.some(function (x) { return x.value !== null; })) return null;
-    return chartBlock(key, t('cWeeks'), function (w) { return C.bars(items, w, { label: t('cWeeks'), labelW: 40 }); },
-      tableOf([t('week'), t('adherence')], items.map(function (x) { return [x.tip.split(':')[0], x.value === null ? '–' : pc(x.value)]; })));
-  }
-
   // ---------- MONTH ----------
   function viewMonth() {
     var st = S.state(), mk = ui.month || E.monthKey(today);
@@ -335,43 +322,266 @@
   }
 
   // ---------- DASHBOARD ----------
-  var PERIODS = ['cur', 'prev', '3', '6', '12', 'year', 'month', 'all'];
+  var PERIODS = ['day', 'week', 'month', '3', 'year'];
+  /** Range of a panel period around an anchor date: dates d0..d1 (and months m0..m1 for month-based ones). */
+  function panelRange(p, a) {
+    var mk = E.monthKey(a), r = { p: p, a: a };
+    if (p === 'day') { r.d0 = r.d1 = a; }
+    else if (p === 'week') { r.d0 = E.weekStart(a); r.d1 = E.addDays(r.d0, 6); }
+    else {
+      r.m0 = p === '3' ? E.addMonths(mk, -2) : p === 'year' ? mk.slice(0, 4) + '-01' : mk;
+      r.m1 = p === 'year' ? mk.slice(0, 4) + '-12' : mk;
+      r.d0 = E.monthStart(r.m0); r.d1 = E.monthEnd(r.m1);
+    }
+    r.cur = r.d0 <= today && today <= r.d1;
+    r.end = r.d1 < today ? r.d1 : today;            // last day that has happened
+    return r;
+  }
+  function panelShift(p, a, dir) {
+    if (p === 'day') return E.addDays(a, dir);
+    if (p === 'week') return E.addDays(a, 7 * dir);
+    var d = E.monthEnd(E.addMonths(E.monthKey(a), (p === '3' ? 3 : p === 'year' ? 12 : 1) * dir));
+    return d > today ? today : d;
+  }
+  function panelTitle(r) {
+    var sm = function (k) { return cap(mfmt(k, { month: 'short' })).replace('.', ''); };
+    if (r.p === 'day') return [cap(dfmt(r.a, { weekday: 'long' })), dfmt(r.a, { day: 'numeric', month: 'long', year: 'numeric' })];
+    if (r.p === 'week') return [r.d0 === E.weekStart(today) ? t('thisWeek') : t('weekOf', { d: dfmt(r.d0, { day: 'numeric', month: 'long' }) }), weekRange(r.d0)];
+    if (r.p === 'month') return [cap(mfmt(r.m0, { month: 'long' })), r.m0.slice(0, 4)];
+    if (r.p === '3') return [sm(r.m0) + ' – ' + sm(r.m1), r.m0.slice(0, 4) === r.m1.slice(0, 4) ? r.m1.slice(0, 4) : r.m0.slice(0, 4) + ' – ' + r.m1.slice(0, 4)];
+    return [r.m0.slice(0, 4), r.cur ? t('yearSoFar', { m: mfmt(E.monthKey(today), { month: 'long' }) }) : ''];
+  }
+  function datesBetween(a, b) { var out = []; for (var d = a, g = 0; d <= b && g < 400; d = E.addDays(d, 1), g++) out.push(d); return out; }
+  function streakLabel(r) { return r.cur ? t('kStreak') : r.p === 'day' ? t('kStreakDay') : t('kStreakEnd'); }
+  function streakAt(st, d) { return d === today ? E.overallStreak(st, today, thr()) : E.overallStreakAt(st, d, thr()); }
+  function habitStreakOn(st, id, d) { return d === today ? E.habitStreak(st, id, today) : E.habitStreakAt(st, id, d); }
+  function daysOk(st, dates) {
+    var n = 0, m = 0;
+    dates.forEach(function (d) { var s = E.dayScore(st, d); if (s !== null) { m++; if (s >= thr() - 1e-12) n++; } });
+    return kpi(t('kDaysOk'), String(n), null, t('kDaysOkSub', { n: m, p: Math.round(thr() * 100) }));
+  }
+  function weekDelta(cur, prev) {
+    if (cur === null || prev === null) return '–';
+    var pts = Math.round(cur * 100) - Math.round(prev * 100);
+    return (pts > 0 ? '+' : pts < 0 ? '−' : '±') + Math.abs(pts);
+  }
+
+  /** Bars of day scores for a list of dates (threshold line, 7-day average when long). */
+  function scoreBars(key, title, st, dates) {
+    var vals = dates.map(function (d) { return d > today ? null : E.dayScore(st, d); });
+    var line = dates.length > 10 ? vals.map(function (_, i) {
+      var seg = vals.slice(Math.max(0, i - 6), i + 1).filter(function (v) { return v !== null; });
+      return dates[i] > today || seg.length < 3 ? null : seg.reduce(function (a, b) { return a + b; }, 0) / seg.length;
+    }) : null;
+    var short = dates.length <= 7;
+    var items = dates.map(function (d, i) {
+      return { label: short ? cap(dfmt(d, { weekday: 'short' })).replace('.', '') : String(+d.slice(8, 10)), value: vals[i], current: d === today,
+        tip: dfmt(d, { weekday: 'short', day: 'numeric', month: 'short' }) + ': ' + (d > today ? '' : pc(vals[i])) };
+    });
+    return chartBlock(key, title, function (w) { return C.bars(items, w, { label: title, threshold: thr(), line: line, labelW: short ? 34 : 22 }); },
+      tableOf([t('day'), t('dayScore')], dates.filter(function (d) { return d <= today; }).map(function (d, i) { return [dfmt(d, { weekday: 'short', day: 'numeric', month: 'short' }), pc(vals[i])]; })),
+      h('div', { class: 'legend' }, h('span', { class: 'lg bar-lg' }, t('lgDay')), line ? h('span', { class: 'lg line-lg' }, t('lgAvg')) : null, h('span', { class: 'lg thr-lg' }, t('lgThr', { n: Math.round(thr() * 100) }))));
+  }
+  /** Bars of one habit's daily result for a list of dates. */
+  function habitBars(key, title, st, hb, dates) {
+    var short = dates.length <= 7;
+    var items = dates.map(function (d) {
+      var r = d > today ? null : habitRatio(st, hb, d);
+      return { label: short ? cap(dfmt(d, { weekday: 'short' })).replace('.', '') : String(+d.slice(8, 10)), value: r, current: d === today,
+        tip: dfmt(d, { weekday: 'short', day: 'numeric', month: 'short' }) + ': ' + (r === null ? '' : habitValueText(st, hb, d)) };
+    });
+    return chartBlock(key, title, function (w) { return C.bars(items, w, { label: title, labelW: short ? 34 : 22 }); },
+      tableOf([t('day'), t('value')], items.filter(function (x) { return x.value !== null; }).map(function (x) { return x.tip.split(': '); })),
+      h('div', { class: 'legend' }, h('span', { class: 'lg bar-lg' }, hb.type === 'check' ? t('lgDone') : t('lgOfGoal'))));
+  }
+  /** Weeks between two dates as chart items; pick(weekStats) returns {value, extra} or null. */
+  function weeksChart(key, st, from, to, pick) {
+    var cw = E.weekStart(today), items = [];
+    for (var ws = E.weekStart(from), g = 0; ws <= to && g < 60; ws = E.addDays(ws, 7), g++) {
+      var wk = E.weekStats(st, ws, today), r = ws > today ? null : pick(wk);
+      items.push({ label: dfmt(ws, { day: 'numeric', month: 'numeric' }), value: r ? r.value : null, current: ws === cw,
+        tip: t('weekOf', { d: dfmt(ws, { day: 'numeric', month: 'short' }) }) + ': ' + (r ? pc(r.value) + (r.extra || '') : t('noData')) });
+    }
+    if (items.length < 2 || !items.some(function (x) { return x.value !== null; })) return null;
+    return chartBlock(key, t('cWeeks'), function (w) { return C.bars(items, w, { label: t('cWeeks'), labelW: 40 }); },
+      tableOf([t('week'), t('adherence')], items.map(function (x) { return [x.tip.split(':')[0], x.value === null ? '–' : pc(x.value)]; })));
+  }
+  function heatBlock(key, end, valueFn, tipFn) {
+    return chartBlock(key, t('cHeat'), function (w) {
+      var weeks = Math.max(8, Math.min(26, Math.floor((w - 18) / 17)));
+      var dow = (E.weekday(end) + 6) % 7;                    // Monday = 0
+      var d = E.addDays(end, -(dow + 7 * (weeks - 1))), last = E.addDays(end, 6 - dow), cells = [];
+      while (d <= last) {
+        var fut = d > today, v = fut ? null : valueFn(d);
+        cells.push({ date: d, value: v, future: fut, today: d === today, tip: dfmt(d, { weekday: 'short', day: 'numeric', month: 'short' }) + ': ' + (fut ? '' : tipFn(d, v)) });
+        d = E.addDays(d, 1);
+      }
+      var dows = []; for (var i = 0; i < 7; i++) dows.push(dfmt(E.addDays('2026-11-02', i), { weekday: 'narrow' }));
+      return C.heat(cells, 0, w, { label: t('cHeat'), dows: dows });
+    }, null, h('div', { class: 'legend scale' }, h('span', { text: t('less') }),
+      [0, 1, 2, 3, 4].map(function (i) { return h('i', { class: 'sw hc-' + i }); }), h('span', { text: t('more') })));
+  }
+  function habitsChart(key, list, tipExtra) {
+    var items = list.slice().sort(function (a, b) { return (b.pct === null ? -1 : b.pct) - (a.pct === null ? -1 : a.pct); }).map(function (x) {
+      return { label: x.name, value: x.pct, low: x.pct !== null && x.pct < 0.4, tip: x.name + ': ' + pc(x.pct) + (x.pct !== null && x.pct < 0.4 ? ' · ' + t('below40') : '') + (tipExtra(x) ? ' · ' + tipExtra(x) : '') };
+    });
+    return chartBlock(key, t('cHabits'), function (w) { return C.hbars(items, w, { label: t('cHabits') }); },
+      tableOf([t('habit'), t('adherence'), t('detail')], list.map(function (x) { return [x.name, pc(x.pct), tipExtra(x)]; })),
+      h('div', { class: 'legend' }, h('span', { class: 'lg low-lg' }, t('below40'))));
+  }
+  function top3(list) {
+    var top = list.filter(function (x) { return x.pct !== null; }).sort(function (a, b) { return b.pct - a.pct; }).slice(0, 3);
+    if (!top.length) return null;
+    return h('section', { class: 'card top3' }, h('h2', { class: 'sect in', text: t('top3') }),
+      h('ol', null, top.map(function (x) { return h('li', null, h('span', { class: 'tn', text: x.name }), h('strong', { text: pc(x.pct) })); })));
+  }
+  function cfgLine(hb, cfg) {
+    var isCheck = hb.type === 'check';
+    return h('p', { class: 'muted rangeline', text: (isCheck ? t('typeCheck') : t('typeNumber')) + ' · ' + goalText(hb, cfg) +
+      (!isCheck && cfg.period === 'daily' && !E.isMax(hb, cfg) ? ' · ' + (cfg.method === 'average' ? t('mAverage') : t('mStrict')) : '') + ' · ' + t('weightShort', { n: nf(cfg.weight) }) });
+  }
+
   function viewPanel() {
-    var st = S.state(), cur = E.monthKey(today);
-    var range = E.periodRange(st, ui.period === 'cur' ? 'x' : ui.period, today, ui.chosen);
-    var ps = E.periodStats(st, range[0], range[1], today, thr());
+    var st = S.state();
+    if (PERIODS.indexOf(ui.period) < 0) ui.period = 'month';
+    var r = panelRange(ui.period, ui.anchor && ui.anchor < today ? ui.anchor : today);
     draws = [];
     var root = h('div', { class: 'page' });
     root.appendChild(h('h1', { class: 'pagetitle', text: t('panel') }));
     root.appendChild(h('div', { class: 'chips', role: 'tablist' }, PERIODS.map(function (p) {
-      return h('button', { class: 'chipbtn' + (ui.period === p ? ' on' : ''), role: 'tab', 'aria-selected': ui.period === p ? 'true' : 'false', text: t('p_' + p), onclick: function () { ui.period = p; if (p === 'month' && !ui.chosen) ui.chosen = cur; S.setMeta('period', p); render(); } });
+      return h('button', { class: 'chipbtn' + (ui.period === p ? ' on' : ''), role: 'tab', 'aria-selected': ui.period === p ? 'true' : 'false', text: t('p_' + p), onclick: function () { ui.period = p; S.setMeta('period', p); render(); } });
     })));
-    if (ui.period === 'month') {
-      root.appendChild(h('div', { class: 'monthpick' }, h('label', { text: t('chooseMonth') + ' ' }),
-        h('input', { type: 'month', value: ui.chosen || cur, max: cur, onchange: function (e) { if (e.target.value) { ui.chosen = e.target.value; render(); } } })));
-    }
-    var rangeText = range[0] === range[1] ? cap(mfmt(range[0])) : cap(mfmt(range[0], { month: 'short', year: 'numeric' })) + ' – ' + cap(mfmt(range[1], { month: 'short', year: 'numeric' }));
-    root.appendChild(h('div', { class: 'muted rangeline', text: rangeText }));
+    var tt = panelTitle(r);
+    root.appendChild(h('div', { class: 'datebar' },
+      h('button', { class: 'iconbtn', 'aria-label': t('prevPeriod'), onclick: function () { ui.anchor = panelShift(r.p, r.a, -1); render(); } }, icon('left')),
+      h('div', { class: 'datetitle' }, h('h2', { class: 'dt-h', text: tt[0] }),
+        h('div', { class: 'datesub' }, tt[1], r.cur ? null : h('button', { class: 'chip link', text: t('backToday'), onclick: function () { ui.anchor = null; render(); } }))),
+      h('button', { class: 'iconbtn', 'aria-label': t('nextPeriod'), disabled: r.d1 >= today, onclick: function () { ui.anchor = panelShift(r.p, r.a, 1); render(); } }, icon('right'))));
 
     if (!E.sortedHabits(st).length) { root.appendChild(emptyState()); return root; }
-
     var selId = ui.habit !== 'all' && st.habits[ui.habit] ? ui.habit : 'all';
     root.appendChild(habitPicker(st, selId));
-    if (selId !== 'all') { habitPanel(root, st, ps, st.habits[selId], range); return root; }
+    var hb = selId !== 'all' ? st.habits[selId] : null;
+    if (r.p === 'day') panelDay(root, st, r, hb);
+    else if (r.p === 'week') panelWeek(root, st, r, hb);
+    else if (hb) habitPanel(root, st, E.periodStats(st, r.m0, r.m1, today, thr()), hb, r);
+    else panelMonths(root, st, r);
+    return root;
+  }
 
-    var todayScore = E.dayScore(st, today);
+  // ----- one day -----
+  function panelDay(root, st, r, hb) {
+    var d = r.a, mk = E.monthKey(d), act = E.activeIn(st, mk);
+    if (!hb) {
+      var score = E.dayScore(st, d), sk = streakAt(st, d), wk = E.weekStats(st, d, d);
+      var daily = act.filter(function (a) { return a.c.period === 'daily' && +d.slice(8, 10) >= E.startDay(st, a.h, mk); });
+      var doneN = daily.filter(function (a) { return E.met(a.h, a.c, E.val(st, d, a.h.id)); }).length;
+      root.appendChild(h('section', { class: 'kpis' },
+        kpi(t('dayScore'), pc(score), score),
+        kpi(t('kDone'), doneN + '/' + daily.length, null, t('kDoneSub')),
+        kpi(streakLabel(r), String(sk), null, streakWord(sk).replace(String(sk), '').trim()),
+        kpi(t('kWeekToDate'), pc(wk.weighted), wk.weighted)));
+      // every habit that day: daily -> that day's result, weekly/monthly -> their period as of that day
+      var list = act.map(function (a) {
+        var x = { id: a.h.id, name: a.h.name, pct: null, extra: '' };
+        if (a.c.period === 'daily') {
+          if (+d.slice(8, 10) < E.startDay(st, a.h, mk)) return null;
+          x.pct = E.fraction(a.h, a.c, E.val(st, d, a.h.id)); x.extra = habitValueText(st, a.h, d);
+        } else if (a.c.period === 'weekly') {
+          var wr = E.weeklyHabitWeek(st, a.h, E.weekStart(d), d);
+          x.pct = wr.pct; x.extra = progressText(a.h, a.c, wr.total, wr.avg) + ' ' + t('thisWeekLc');
+        } else {
+          var hm = null; E.monthStats(st, mk, d).habits.forEach(function (y) { if (y.id === a.h.id) hm = y; });
+          x.pct = hm ? hm.pct : null; x.extra = hm ? progressText(a.h, a.c, hm.total, hm.avg) + ' ' + t('thisMonth') : '';
+        }
+        return x;
+      }).filter(Boolean);
+      if (list.length) root.appendChild(habitsChart('dhabits', list, function (x) { return x.extra; }));
+      root.appendChild(scoreBars('d14', t('cLast14'), st, datesBetween(E.addDays(d, -13), d)));
+      return;
+    }
+    var c = E.cfgFor(hb, mk);
+    if (!c || (c.period === 'daily' && +d.slice(8, 10) < E.startDay(st, hb, mk))) { root.appendChild(h('p', { class: 'muted pad', text: t('noHabitDay') })); return; }
+    var u = hb.unit ? ' ' + hb.unit : '';
+    if (c.period === 'daily') {
+      var ratio = E.fraction(hb, c, E.val(st, d, hb.id)), hs = habitStreakOn(st, hb.id, d), wx = null;
+      E.weekStats(st, d, d).habits.forEach(function (y) { if (y.id === hb.id) wx = y; });
+      root.appendChild(h('section', { class: 'kpis' },
+        kpi(t('value'), habitValueText(st, hb, d), null, goalText(hb, c)),
+        kpi(t('kAdherence'), pc(ratio), ratio),
+        kpi(streakLabel(r), String(hs), null, streakWord(hs).replace(String(hs), '').trim()),
+        kpi(t('kWeekToDate'), pc(wx ? wx.pct : null), wx ? wx.pct : null)));
+    } else {
+      var pr = c.period === 'weekly' ? E.weeklyHabitWeek(st, hb, E.weekStart(d), d) : null, pm = null;
+      if (!pr) E.monthStats(st, mk, d).habits.forEach(function (y) { if (y.id === hb.id) pm = y; });
+      var pp = pr ? pr.pct : pm ? pm.pct : null;
+      root.appendChild(h('section', { class: 'kpis' },
+        kpi(t('value'), habitValueText(st, hb, d), null, t('thatDay')),
+        kpi(c.period === 'weekly' ? t('kWeekToDate') : t('kMonthToDate'), pc(pp), pp),
+        kpi(t('kProgress'), pr ? progressText(hb, c, pr.total, pr.avg) : pm ? progressText(hb, c, pm.total, pm.avg) : '–', null, goalText(hb, c))));
+    }
+    root.appendChild(habitBars('hd14', t('cLast14'), st, hb, datesBetween(E.addDays(d, -13), d)));
+    root.appendChild(cfgLine(hb, c));
+  }
+
+  // ----- one week -----
+  function panelWeek(root, st, r, hb) {
+    var wk = E.weekStats(st, r.d0, today), prev = E.weekStats(st, E.addDays(r.d0, -7), today), days = datesBetween(r.d0, r.d1);
+    var past12 = E.addDays(r.d0, -77);
+    if (!hb) {
+      if (!wk.habits.length) { root.appendChild(h('p', { class: 'muted pad', text: t('noHabitsWeek') })); return; }
+      var sk = streakAt(st, r.end);
+      root.appendChild(h('section', { class: 'kpis' },
+        kpi(t('kAdherence'), pc(wk.weighted), wk.weighted),
+        kpi(t('kVsPrev'), weekDelta(wk.weighted, prev.weighted), null, t('ptsWord')),
+        kpi(streakLabel(r), String(sk), null, streakWord(sk).replace(String(sk), '').trim()),
+        daysOk(st, days.filter(function (d) { return d <= today; }))));
+      root.appendChild(scoreBars('wdays', t('daysTitle'), st, days));
+      root.appendChild(habitsChart('whabits', wk.habits, weekHabitSub));
+      add(root, weeksChart('weeks', st, past12, r.d0, function (w) { return w.weighted === null || !w.elapsed ? null : { value: w.weighted }; }));
+      add(root, top3(wk.habits));
+      return;
+    }
+    var x = null; wk.habits.forEach(function (y) { if (y.id === hb.id) x = y; });
+    var cfg = E.cfgFor(hb, E.monthKey(r.end)) || E.cfgFor(hb, E.monthKey(r.d0));
+    if (!cfg) { root.appendChild(h('p', { class: 'muted pad', text: t('noHabitDay') })); return; }
+    var u = hb.unit ? ' ' + hb.unit : '', r2 = function (n) { return nf(Math.round(n * 100) / 100); };
+    var unitTxt = hb.type === 'check' && !hb.unit ? t('daysWord') : (hb.unit || '');
+    if (cfg.period === 'monthly') {
+      root.appendChild(h('p', { class: 'muted pad', text: t('monthlyInWeek') }));
+    } else {
+      var hs = cfg.period === 'daily' ? habitStreakOn(st, hb.id, r.end) : null;
+      root.appendChild(h('section', { class: 'kpis' },
+        kpi(t('kAdherence'), pc(x ? x.pct : null), x ? x.pct : null),
+        kpi(streakLabel(r), hs === null ? '–' : String(hs), null, hs === null ? t('weeklyGoalShort') : streakWord(hs).replace(String(hs), '').trim()),
+        kpi(t('kTotal'), x ? r2(x.total) : '–', null, unitTxt),
+        kpi(t('kAvg'), x ? r2(x.avg) : '–', null, unitTxt ? unitTxt + '/' + t('dayShort') : '')));
+      if (x) root.appendChild(h('p', { class: 'muted rangeline', text: weekHabitSub(x) }));
+    }
+    root.appendChild(habitBars('hwdays', t('daysTitle'), st, hb, days));
+    if (cfg.period !== 'monthly') add(root, weeksChart('hweeks', st, past12, r.d0, function (w) {
+      var y = null; w.habits.forEach(function (z) { if (z.id === hb.id) y = z; });
+      return !y || y.pct === null ? null : { value: y.pct, extra: ' · ' + weekHabitSub(y) };
+    }));
+    root.appendChild(cfgLine(hb, cfg));
+  }
+
+  // ----- month, 3 months, year -----
+  function panelMonths(root, st, r) {
+    var ps = E.periodStats(st, r.m0, r.m1, today, thr()), cur = E.monthKey(today);
+    if (!ps.included) { root.appendChild(h('p', { class: 'muted pad', text: r.d0 > today ? t('futureMonth') : t('noDataPeriod') })); return; }
+    var sk = streakAt(st, r.end);
     root.appendChild(h('section', { class: 'kpis' },
       kpi(t('kAdherence'), pc(ps.overall), ps.overall),
-      kpi(t('kStreak'), String(ps.streak), null, streakWord(ps.streak).replace(String(ps.streak), '').trim()),
-      kpi(t('kToday'), pc(todayScore), todayScore),
-      kpi(t('kMonths'), String(ps.included), null, t('kMonthsSub', { n: ps.months.length }))));
+      kpi(streakLabel(r), String(sk), null, streakWord(sk).replace(String(sk), '').trim()),
+      daysOk(st, datesBetween(r.d0, r.end)),
+      r.p === 'month' ? kpi(t('kDays'), String(Math.max(0, E.elapsedDays(r.m0, today))), null, t('kDaysSub', { n: E.daysInMonth(r.m0) }))
+        : kpi(t('kMonths'), String(ps.included), null, t('kMonthsSub', { n: ps.months.length }))));
 
-    add(root, weeksChart('weeks', st, function (wk) { return wk.weighted === null || !wk.elapsed ? null : { value: wk.weighted }; }));
+    if (r.d0 <= today) add(root, weeksChart('weeks', st, r.d0, r.end, function (w) { return w.weighted === null || !w.elapsed ? null : { value: w.weighted }; }));
 
-    // monthly evolution (only when the period spans months)
-    var monthsShown = ps.months.slice(-12);
-    if (monthsShown.length > 1) {
-      var items = monthsShown.map(function (m) {
+    if (ps.months.length > 1) {
+      var items = ps.months.map(function (m) {
         var inc = m.elapsed > 0 && m.weighted !== null && (m.key === cur || E.hasLogs(st, m.key));
         return { label: cap(mfmt(m.key, { month: 'short' })).replace('.', ''), value: inc ? m.weighted : null, current: m.key === cur,
           tip: cap(mfmt(m.key)) + ': ' + (inc ? pc(m.weighted) : t('noData')) };
@@ -380,56 +590,15 @@
         tableOf([t('month'), t('adherence')], items.map(function (i) { return [i.tip.split(':')[0], i.value === null ? '–' : pc(i.value)]; }))));
     }
 
-    // day by day for the last month in the range
-    var lastKey = range[1], lm = ps.months[ps.months.length - 1];
-    if (lm && lm.elapsed > 0) {
-      var vals = lm.days.map(function (d) { return d.score; });
-      var ma = vals.map(function (_, i) {
-        var seg = vals.slice(Math.max(0, i - 6), i + 1).filter(function (v) { return v !== null; });
-        return lm.days[i].future || seg.length < 3 ? null : seg.reduce(function (a, b) { return a + b; }, 0) / seg.length;
-      });
-      var ditems = lm.days.map(function (d) {
-        return { label: String(d.day), value: d.future ? null : d.score, tip: dfmt(d.date, { weekday: 'short', day: 'numeric', month: 'short' }) + ': ' + (d.future ? '' : pc(d.score)) };
-      });
-      var title = t('cDaily', { m: cap(mfmt(lastKey)) });
-      root.appendChild(chartBlock('daily', title, function (w) { return C.bars(ditems, w, { label: title, threshold: thr(), line: ma, labelW: 22 }); },
-        tableOf([t('day'), t('dayScore')], lm.days.filter(function (d) { return !d.future; }).map(function (d) { return [dfmt(d.date, { day: 'numeric', month: 'short' }), pc(d.score)]; })),
-        h('div', { class: 'legend' }, h('span', { class: 'lg bar-lg' }, t('lgDay')), h('span', { class: 'lg line-lg' }, t('lgAvg')), h('span', { class: 'lg thr-lg' }, t('lgThr', { n: Math.round(thr() * 100) })))));
-    }
+    var lastKey = E.monthKey(r.end);
+    if (r.d0 <= today) root.appendChild(scoreBars('daily', t('cDaily', { m: cap(mfmt(lastKey)) }), st, datesBetween(E.monthStart(lastKey), E.monthEnd(lastKey))));
+    root.appendChild(heatBlock('heat', r.end, function (d) { return E.dayScore(st, d); }, function (d, v) { return pc(v); }));
 
-    // heatmap of recent weeks
-    root.appendChild(chartBlock('heat', t('cHeat'), function (w) {
-      var weeks = Math.max(8, Math.min(26, Math.floor((w - 18) / 17)));
-      var dow = (E.weekday(today) + 6) % 7;                 // Monday = 0
-      var startDate = E.addDays(today, -(dow + 7 * (weeks - 1)));
-      var cells = [], d = startDate, last = E.addDays(today, 6 - dow);
-      while (d <= last) {
-        var fut = d > today, sc = fut ? null : E.dayScore(st, d);
-        cells.push({ date: d, value: sc, future: fut, today: d === today, tip: dfmt(d, { weekday: 'short', day: 'numeric', month: 'short' }) + ': ' + (fut ? '' : pc(sc)) });
-        d = E.addDays(d, 1);
-      }
-      var dows = []; for (var i = 0; i < 7; i++) dows.push(dfmt(E.addDays('2026-11-02', i), { weekday: 'narrow' }));
-      return C.heat(cells, 0, w, { label: t('cHeat'), dows: dows });
-    }, null, h('div', { class: 'legend scale' }, h('span', { text: t('less') }),
-      [0, 1, 2, 3, 4].map(function (i) { return h('i', { class: 'sw hc-' + i }); }), h('span', { text: t('more') }))));
-
-    // per habit
-    if (ps.habits.length) {
-      var hitems = ps.habits.slice().sort(function (a, b) { return (b.pct === null ? -1 : b.pct) - (a.pct === null ? -1 : a.pct); }).map(function (x) {
-        return { label: x.name, value: x.pct, low: x.pct !== null && x.pct < 0.4, tip: x.name + ': ' + pc(x.pct) + (x.pct !== null && x.pct < 0.4 ? ' · ' + t('below40') : '') + ' · ' + t('avgDay', { n: nf(Math.round(x.avg * 100) / 100) }) + (x.unit ? ' ' + x.unit : '') };
-      });
-      root.appendChild(chartBlock('habits', t('cHabits'), function (w) { return C.hbars(hitems, w, { label: t('cHabits') }); },
-        tableOf([t('habit'), t('adherence'), t('avgDayHead'), t('streakHead')], ps.habits.map(function (x) { return [x.name, pc(x.pct), nf(Math.round(x.avg * 100) / 100) + (x.unit ? ' ' + x.unit : ''), x.period === 'daily' ? String(x.streak) : '–']; })),
-        h('div', { class: 'legend' }, h('span', { class: 'lg low-lg' }, t('below40')))));
-    }
-
-    if (ps.top.length) {
-      root.appendChild(h('section', { class: 'card top3' }, h('h2', { class: 'sect in', text: t('top3') }),
-        h('ol', null, ps.top.map(function (x) { return h('li', null, h('span', { class: 'tn', text: x.name }), h('strong', { text: pc(x.pct) })); }))));
-    }
-    return root;
+    if (ps.habits.length) root.appendChild(habitsChart('habits', ps.habits, function (x) {
+      return t('avgDay', { n: nf(Math.round(x.avg * 100) / 100) + (x.unit ? ' ' + x.unit : '') }) + (x.period === 'daily' ? ' · ' + t('streakShort', { n: x.streak }) : '');
+    }));
+    add(root, top3(ps.habits));
   }
-
 
   // ---------- dashboard for one habit ----------
   function habitPicker(st, selId) {
@@ -460,66 +629,61 @@
     return nf(typeof v === 'number' ? v : 0) + u;
   }
 
-  function habitPanel(root, st, ps, hb, range) {
+  /** Month, 3 months or year for one habit. */
+  function habitPanel(root, st, ps, hb, r) {
     var cur = E.monthKey(today), px = null;
     ps.habits.forEach(function (x) { if (x.id === hb.id) px = x; });
-    var cfg = E.cfgFor(hb, range[1]) || E.cfgFor(hb, cur) || hb.versions[hb.versions.length - 1];
+    var cfg = E.cfgFor(hb, E.monthKey(r.end)) || E.cfgFor(hb, cur) || hb.versions[hb.versions.length - 1];
     var u = hb.unit ? ' ' + hb.unit : '', isCheck = hb.type === 'check', monthly = cfg.period === 'monthly', weekly = cfg.period === 'weekly';
     var r2 = function (x) { return nf(Math.round(x * 100) / 100); };
-    var streak = monthly || weekly ? null : E.habitStreak(st, hb.id, today);
+    var streak = monthly || weekly ? null : habitStreakOn(st, hb.id, r.end);
     var unitTxt = isCheck && !hb.unit ? t('daysWord') : (hb.unit || '');
 
     root.appendChild(h('section', { class: 'kpis' },
       kpi(t('kAdherence'), pc(px ? px.pct : null), px ? px.pct : null),
-      kpi(t('kStreak'), streak === null ? '–' : String(streak), null, streak === null ? (weekly ? t('weeklyGoalShort') : t('monthlyGoalShort')) : streakWord(streak).replace(String(streak), '').trim()),
+      kpi(streakLabel(r), streak === null ? '–' : String(streak), null, streak === null ? (weekly ? t('weeklyGoalShort') : t('monthlyGoalShort')) : streakWord(streak).replace(String(streak), '').trim()),
       kpi(t('kTotal'), px ? r2(px.total) : '–', null, unitTxt),
       kpi(t('kAvg'), px ? r2(px.avg) : '–', null, unitTxt ? unitTxt + '/' + t('dayShort') : '')));
 
-    if (!monthly) add(root, weeksChart('hweeks', st, function (wk) {
+    if (!monthly && r.d0 <= today) add(root, weeksChart('hweeks', st, r.d0, r.end, function (wk) {
       var x = null; wk.habits.forEach(function (y) { if (y.id === hb.id) x = y; });
-      if (!x || x.pct === null) return null;
-      return { value: x.pct, extra: x.period === 'weekly' ? ' · ' + (x.basis === 'avg' ? t('avgOf', { a: r2(x.avg), b: r2(x.goal) + u }) : r2(x.total) + ' / ' + r2(x.goal) + u) : isCheck ? ' · ' + t('daysMet', { a: x.met, b: x.days }) : ' · ' + t('avgDay', { n: r2(x.avg) + u }) };
+      return !x || x.pct === null ? null : { value: x.pct, extra: ' · ' + weekHabitSub(x) };
     }));
 
-    // adherence by month for this habit
-    var months = ps.months.slice(-12);
-    if (months.length > 1) {
-      var items = months.map(function (m) {
+    if (ps.months.length > 1) {
+      var items = ps.months.map(function (m) {
         var x = null; m.habits.forEach(function (y) { if (y.id === hb.id) x = y; });
         var inc = x && x.pct !== null && (m.key === cur || E.hasLogs(st, m.key));
         return { label: cap(mfmt(m.key, { month: 'short' })).replace('.', ''), value: inc ? x.pct : null, current: m.key === cur,
-          tip: cap(mfmt(m.key)) + ': ' + (inc ? pc(x.pct) + (x.period === 'monthly' || !isCheck ? ' · ' + r2(x.total) + (x.unit ? ' ' + x.unit : '') : '') : t('noData')) };
+          tip: cap(mfmt(m.key)) + ': ' + (inc ? pc(x.pct) + (x.period !== 'daily' || !isCheck ? ' · ' + r2(x.total) + (x.unit ? ' ' + x.unit : '') : '') : t('noData')) };
       });
       root.appendChild(chartBlock('hmonths', t('cMonths'), function (w) { return C.bars(items, w, { label: t('cMonths'), labelW: 30 }); },
         tableOf([t('month'), t('adherence')], items.map(function (i) { return [i.tip.split(':')[0], i.value === null ? '–' : pc(i.value)]; }))));
     }
 
-    // day by day (or running total for a monthly goal) for the last month in the range
-    var lm = ps.months[ps.months.length - 1];
-    var c = lm ? E.cfgFor(hb, lm.key) : null;
-    if (lm && c && lm.elapsed > 0) {
-      var ditems = [], line = [], rows = [], cum = 0, ratios = [], i;
-      lm.days.forEach(function (d) {
-        var v = E.val(st, d.date, hb.id), ratio = d.future ? null : habitRatio(st, hb, d.date);
+    // day by day (or running total for a monthly goal) for the last month that has started
+    var lk = E.monthKey(r.end), c = r.d0 <= today ? E.cfgFor(hb, lk) : null;
+    if (c) {
+      var dim = E.daysInMonth(lk), ditems = [], line = [], rows = [], cum = 0, ratios = [];
+      datesBetween(E.monthStart(lk), E.monthEnd(lk)).forEach(function (d, k) {
+        var fut = d > today, v = E.val(st, d, hb.id), ratio = fut ? null : habitRatio(st, hb, d);
         ratios.push(ratio);
-        var amount = hb.type === 'check' ? (v === true ? 1 : 0) : (typeof v === 'number' ? v : 0);
         if (c.period === 'monthly') {
-          if (!d.future) cum += amount;
-          var mt = isAvg(c) ? c.goal * lm.dim : c.goal, cr = Math.min(1, cum / mt);
-          ditems.push({ label: String(d.day), value: d.future ? null : cr, tip: dfmt(d.date, { day: 'numeric', month: 'short' }) + ': ' + nf(Math.round(cum * 100) / 100) + ' / ' + nf(Math.round(mt * 100) / 100) + u });
-          line.push(d.day / lm.dim);
+          if (!fut) cum += hb.type === 'check' ? (v === true ? 1 : 0) : (typeof v === 'number' ? v : 0);
+          var mt = isAvg(c) ? c.goal * dim : c.goal;
+          ditems.push({ label: String(k + 1), value: fut ? null : Math.min(1, cum / mt), tip: dfmt(d, { day: 'numeric', month: 'short' }) + ': ' + r2(cum) + ' / ' + r2(mt) + u });
+          line.push((k + 1) / dim);
+          if (!fut) rows.push([dfmt(d, { day: 'numeric', month: 'short' }), r2(cum) + ' / ' + r2(mt) + u]);
         } else {
-          ditems.push({ label: String(d.day), value: ratio, tip: dfmt(d.date, { weekday: 'short', day: 'numeric', month: 'short' }) + ': ' + (d.future ? '' : habitValueText(st, hb, d.date) + (hb.type === 'number' && c.period === 'daily' ? ' (' + pc(ratio) + ')' : '')) });
+          ditems.push({ label: String(k + 1), value: ratio, tip: dfmt(d, { weekday: 'short', day: 'numeric', month: 'short' }) + ': ' + (fut ? '' : habitValueText(st, hb, d) + (hb.type === 'number' && c.period === 'daily' ? ' (' + pc(ratio) + ')' : '')) });
+          if (!fut) rows.push([dfmt(d, { day: 'numeric', month: 'short' }), habitValueText(st, hb, d)]);
         }
-        if (!d.future) rows.push([dfmt(d.date, { day: 'numeric', month: 'short' }), c.period === 'monthly' ? nf(Math.round(cum * 100) / 100) + ' / ' + nf(Math.round((isAvg(c) ? c.goal * lm.dim : c.goal) * 100) / 100) + u : habitValueText(st, hb, d.date)]);
       });
-      if (c.period !== 'monthly') {
-        ratios.forEach(function (_, k) {
-          var seg = ratios.slice(Math.max(0, k - 6), k + 1).filter(function (x) { return x !== null; });
-          line.push(lm.days[k].future || seg.length < 3 ? null : seg.reduce(function (a, b) { return a + b; }, 0) / seg.length);
-        });
-      }
-      var title = c.period === 'monthly' ? t('cCum', { m: cap(mfmt(lm.key)) }) : t('cHabitDaily', { m: cap(mfmt(lm.key)) });
+      if (c.period !== 'monthly') ratios.forEach(function (_, k) {
+        var seg = ratios.slice(Math.max(0, k - 6), k + 1).filter(function (x) { return x !== null; });
+        line.push(E.addDays(E.monthStart(lk), k) > today || seg.length < 3 ? null : seg.reduce(function (a, b) { return a + b; }, 0) / seg.length);
+      });
+      var title = c.period === 'monthly' ? t('cCum', { m: cap(mfmt(lk)) }) : t('cHabitDaily', { m: cap(mfmt(lk)) });
       root.appendChild(chartBlock('hdaily', title, function (w) { return C.bars(ditems, w, { label: title, line: line, labelW: 22 }); },
         tableOf([t('day'), t('value')], rows),
         c.period === 'monthly'
@@ -527,26 +691,8 @@
           : h('div', { class: 'legend' }, h('span', { class: 'lg bar-lg' }, hb.type === 'check' || c.period === 'weekly' ? t('lgDone') : t('lgOfGoal')), h('span', { class: 'lg line-lg' }, t('lgAvg')))));
     }
 
-    // heatmap for this habit
-    root.appendChild(chartBlock('hheat', t('cHeat'), function (w) {
-      var weeks = Math.max(8, Math.min(26, Math.floor((w - 18) / 17)));
-      var dow = (E.weekday(today) + 6) % 7;
-      var d = E.addDays(today, -(dow + 7 * (weeks - 1))), last = E.addDays(today, 6 - dow), cells = [];
-      while (d <= last) {
-        var fut = d > today, r = fut ? null : habitRatio(st, hb, d);
-        cells.push({ date: d, value: r, future: fut, today: d === today, tip: dfmt(d, { weekday: 'short', day: 'numeric', month: 'short' }) + ': ' + (fut || r === null ? '' : habitValueText(st, hb, d)) });
-        d = E.addDays(d, 1);
-      }
-      var dows = []; for (var j = 0; j < 7; j++) dows.push(dfmt(E.addDays('2026-11-02', j), { weekday: 'narrow' }));
-      return C.heat(cells, 0, w, { label: t('cHeat'), dows: dows });
-    }, null, h('div', { class: 'legend scale' }, h('span', { text: t('less') }),
-      [0, 1, 2, 3, 4].map(function (k) { return h('i', { class: 'sw hc-' + k }); }), h('span', { text: t('more') }))));
-
-    // habit settings in force
-    var cfgTxt = (isCheck ? t('typeCheck') : t('typeNumber')) + ' · ' +
-      goalText(hb, cfg) +
-      (!isCheck && cfg.period === 'daily' && !E.isMax(hb, cfg) ? ' · ' + (cfg.method === 'average' ? t('mAverage') : t('mStrict')) : '') + ' · ' + t('weightShort', { n: nf(cfg.weight) });
-    root.appendChild(h('p', { class: 'muted rangeline', text: cfgTxt }));
+    root.appendChild(heatBlock('hheat', r.end, function (d) { return habitRatio(st, hb, d); }, function (d, v) { return v === null ? '' : habitValueText(st, hb, d); }));
+    root.appendChild(cfgLine(hb, cfg));
   }
 
   function kpi(label, value, ratio, sub) {
@@ -981,7 +1127,7 @@
       if (link && !badLink) { S.configureSync(link.u, link.k); }
       var nav = (navigator.language || 'es').toLowerCase();
       lang = S.getMeta('lang', nav.indexOf('en') === 0 ? 'en' : 'es'); locale = lang === 'es' ? 'es-ES' : 'en-GB';
-      ui.period = S.getMeta('period', '3'); ui.habit = S.getMeta('panelHabit', 'all');
+      ui.period = S.getMeta('period', 'month'); ui.habit = S.getMeta('panelHabit', 'all');
       applyTheme(); buildShell();
       S.on(function (src) {
         if (src === 'sync') { updatePill(); return; }

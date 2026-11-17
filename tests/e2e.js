@@ -92,8 +92,13 @@ async function until(fn, label, ms = 8000) { const t0 = Date.now(); while (Date.
   await pa.click('.linkbtn >> nth=0');
   ok('table view available', (await pa.locator('.dt').count()) === 1);
   await pa.click('.linkbtn >> nth=0');
-  for (const p of ['Mes anterior', '6 meses', 'Todo', 'Este mes']) { await pa.click(`.chipbtn:text-is("${p}")`); await pa.waitForSelector('.kpis'); }
-  await pa.click('.chipbtn:text-is("Elegir mes")'); ok('month picker appears', await pa.locator('.monthpick input').count() === 1);
+  for (const p of ['Día', 'Semana', '3 meses', 'Año', 'Mes']) { await pa.click(`.chipbtn:text-is("${p}")`); await pa.waitForSelector('.kpis'); }
+  const panelTitle = () => pa.locator('.datetitle .dt-h').innerText();
+  const nowTitle = await panelTitle();
+  await pa.click('[aria-label="Periodo anterior"]'); await pa.waitForSelector('.kpis');
+  ok('arrow goes to previous month', (await panelTitle()) !== nowTitle && (await pa.locator('text=Volver a hoy').count()) === 1);
+  await pa.click('[aria-label="Periodo siguiente"]');
+  ok('arrow comes back', (await panelTitle()) === nowTitle && await pa.locator('[aria-label="Periodo siguiente"]').isDisabled());
   await pa.selectOption('#f-ph', { label: 'Flexiones' });
   ok('single-habit view shows its own KPIs', (await pa.locator('.kpis .kl').allInnerTexts()).includes('Total') && (await pa.locator('.top3').count()) === 0);
   ok('single-habit charts render', (await pa.locator('.chart svg').count()) >= 2);

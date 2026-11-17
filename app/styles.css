@@ -78,7 +78,7 @@ button:disabled { cursor: default; opacity: .4; }
 .sect.in { margin: 0; color: var(--ink); font-size: 16px; }
 .datebar { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .datetitle { text-align: center; flex: 1; min-width: 0; }
-.datetitle h1 { font-size: 30px; font-weight: 750; line-height: 1.1; letter-spacing: -.01em; }
+.datetitle h1, .datetitle .dt-h { margin: 0; font-size: 30px; font-weight: 750; line-height: 1.1; letter-spacing: -.01em; }
 .datesub { color: var(--ink-2); font-size: 15px; margin-top: 4px; display: flex; gap: 8px; align-items: center; justify-content: center; flex-wrap: wrap; }
 .iconbtn { width: 48px; height: 48px; border-radius: 14px; border: 1px solid var(--line); background: var(--surface); display: grid; place-items: center; }
 .iconbtn.sm { width: 40px; height: 40px; border-radius: 12px; border-color: transparent; background: transparent; }
@@ -158,8 +158,6 @@ button:disabled { cursor: default; opacity: .4; }
 .chipbtn.on { background: var(--sage); border-color: var(--sage); color: #fff; }
 :root[data-theme="dark"] .chipbtn.on { color: #0E1A13; }
 @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .chipbtn.on { color: #0E1A13; } }
-.monthpick { display: flex; align-items: center; gap: 8px; }
-.monthpick input { min-height: 44px; border-radius: 12px; border: 1px solid var(--line); background: var(--surface); color: var(--ink); padding: 0 12px; font: inherit; }
 .rangeline { font-size: 14px; margin-top: 0 !important; }
 .kpis { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; }
 @media (min-width: 560px) { .kpis { grid-template-columns: repeat(4, 1fr); } }
