@@ -1,6 +1,9 @@
 /* UI strings. {x} placeholders are filled by t(). */
 var I18N = {
   es: {
+    tabWeek: 'Semana', thisWeek: 'Esta semana', weekOf: 'Semana del {d}', backThisWeek: 'Volver a esta semana', prevWeek: 'Semana anterior', nextWeek: 'Semana siguiente',
+    weekSoFar: 'Esta semana', weightedWeek: 'cumplimiento ponderado de la semana', noHabitsWeek: 'No había hábitos diarios activos esta semana.',
+    vsLastWeek: '{d} puntos respecto a la semana anterior', daysMet: '{a} de {b} días cumplidos', weekMissing: 'faltan {n} para ir al día', cWeeks: 'Cumplimiento por semana', week: 'Semana',
     appName: 'Hábitos', tabToday: 'Hoy', tabMonth: 'Mes', tabPanel: 'Panel', tabHabits: 'Hábitos',
     todayChip: 'Hoy', backToday: 'Volver a hoy', prevDay: 'Día anterior', nextDay: 'Día siguiente', prevMonth: 'Mes anterior', nextMonth: 'Mes siguiente',
     dayScore: 'Cumplimiento del día', ofGoal: 'de {n}', dayComplete: 'Día completo', doneOf: '{a} de {b} hábitos hechos',
@@ -54,6 +57,9 @@ var I18N = {
     noStorage: 'Este navegador no permite guardar datos. Tus cambios se perderán al cerrar la pestaña.', updateReady: 'Hay una versión nueva', updateNow: 'Actualizar'
   },
   en: {
+    tabWeek: 'Week', thisWeek: 'This week', weekOf: 'Week of {d}', backThisWeek: 'Back to this week', prevWeek: 'Previous week', nextWeek: 'Next week',
+    weekSoFar: 'This week', weightedWeek: 'weighted score for the week', noHabitsWeek: 'There were no active daily habits this week.',
+    vsLastWeek: '{d} points vs last week', daysMet: 'goal met {a} of {b} days', weekMissing: '{n} short of pace', cWeeks: 'Adherence by week', week: 'Week',
     appName: 'Habits', tabToday: 'Today', tabMonth: 'Month', tabPanel: 'Dashboard', tabHabits: 'Habits',
     todayChip: 'Today', backToday: 'Back to today', prevDay: 'Previous day', nextDay: 'Next day', prevMonth: 'Previous month', nextMonth: 'Next month',
     dayScore: 'Day score', ofGoal: 'of {n}', dayComplete: 'Day complete', doneOf: '{a} of {b} habits done',

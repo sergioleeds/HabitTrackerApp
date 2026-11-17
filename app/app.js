@@ -49,7 +49,7 @@
   function cap(s) { return s.charAt(0).toUpperCase() + s.slice(1); }
   function newId() { return 'h' + Math.random().toString(36).slice(2, 9); }
 
-  var ui = { tab: 'today', date: null, month: null, period: '3', habit: 'all', chosen: null, tables: {}, editing: null };
+  var ui = { tab: 'today', date: null, week: null, month: null, period: '3', habit: 'all', chosen: null, tables: {}, editing: null };
   var draws = [], today = E.localToday();
   var view, tip, toastEl, installEvt = null;
 
@@ -108,7 +108,8 @@
       h('div', { class: 'facts' },
         h('div', { class: 'fact-big' }, score === 1 ? t('dayComplete') : t('doneOf', { a: doneN, b: daily.length })),
         h('div', { class: 'fact' }, t('streakLabel') + ': ', h('strong', { text: streakWord(streak) })),
-        h('div', { class: 'fact muted' }, t('monthSoFar') + ': ', h('strong', { text: pc(ms.weighted) })))));
+        h('div', { class: 'fact muted' }, t('weekSoFar') + ': ', h('strong', { text: pc(E.weekStats(st, date, today).weighted) }), ' · ',
+          t('monthSoFar') + ': ', h('strong', { text: pc(ms.weighted) })))));
 
     var dailyRows = act.filter(function (a) { return a.c.period === 'daily'; });
     var monthRows = act.filter(function (a) { return a.c.period === 'monthly'; });
@@ -190,6 +191,75 @@
     btn.replaceWith(inp); inp.focus(); inp.select();
   }
 
+  // ---------- WEEK ----------
+  function weekRange(ws) {
+    var we = E.addDays(ws, 6), sameMonth = ws.slice(0, 7) === we.slice(0, 7);
+    return (sameMonth ? dfmt(ws, { day: 'numeric' }) : dfmt(ws, { day: 'numeric', month: 'short' })) + ' – ' + dfmt(we, { day: 'numeric', month: 'short', year: 'numeric' });
+  }
+  function weekHabitSub(x) {
+    var u = x.unit ? ' ' + x.unit : '', r2 = function (n) { return nf(Math.round(n * 100) / 100); };
+    if (x.type === 'check') return t('daysMet', { a: x.met, b: x.days });
+    var s = r2(x.total) + ' / ' + r2(x.target) + u + ' · ' + t('avgDay', { n: r2(x.avg) + u });
+    if (x.method === 'average') s += ' · ' + (x.missing > 0.0001 ? t('weekMissing', { n: r2(x.missing) + u }) : t('onTrack'));
+    else s += ' · ' + t('daysMet', { a: x.met, b: x.days });
+    return s;
+  }
+  function viewWeek() {
+    var st = S.state(), cw = E.weekStart(today), ws = ui.week || cw, isCur = ws === cw;
+    var wk = E.weekStats(st, ws, today), prev = E.weekStats(st, E.addDays(ws, -7), today);
+    var root = h('div', { class: 'page' });
+    root.appendChild(h('div', { class: 'datebar' },
+      h('button', { class: 'iconbtn', 'aria-label': t('prevWeek'), onclick: function () { ui.week = E.addDays(ws, -7); render(); } }, icon('left')),
+      h('div', { class: 'datetitle' }, h('h1', { text: isCur ? t('thisWeek') : t('weekOf', { d: dfmt(ws, { day: 'numeric', month: 'long' }) }) }),
+        h('div', { class: 'datesub' }, weekRange(ws),
+          isCur ? null : h('button', { class: 'chip link', text: t('backThisWeek'), onclick: function () { ui.week = null; render(); } }))),
+      h('button', { class: 'iconbtn', 'aria-label': t('nextWeek'), disabled: ws >= cw, onclick: function () { ui.week = E.addDays(ws, 7); render(); } }, icon('right'))));
+    if (!wk.habits.length) { root.appendChild(h('p', { class: 'muted pad', text: t('noHabitsWeek') })); return root; }
+
+    var ringBox = h('div', { class: 'ring' }); ringBox.innerHTML = C.ring(wk.weighted, 92, t('weightedWeek') + ' ' + pc(wk.weighted));
+    var delta = null;
+    if (wk.weighted !== null && prev.weighted !== null) {
+      var pts = Math.round(wk.weighted * 100) - Math.round(prev.weighted * 100);
+      delta = t('vsLastWeek', { d: (pts > 0 ? '+' : pts < 0 ? '−' : '±') + Math.abs(pts) });
+    }
+    root.appendChild(h('section', { class: 'summary' }, ringBox,
+      h('div', { class: 'facts' },
+        h('div', { class: 'fact-big', text: pc(wk.weighted) }),
+        h('div', { class: 'fact muted', text: t('weightedWeek') + ' · ' + t('daysOf', { a: wk.elapsed, b: 7 }) }),
+        delta ? h('div', { class: 'fact', text: delta }) : null)));
+
+    root.appendChild(h('h2', { class: 'sect', text: t('byHabit') }));
+    root.appendChild(h('div', { class: 'card' }, wk.habits.map(function (x) {
+      return h('div', { class: 'hline' },
+        h('div', { class: 'hl-top' }, h('span', { class: 'hl-name', text: x.name }), h('span', { class: 'hl-pct', text: pc(x.pct) })),
+        h('div', { class: 'bar' + (x.pct !== null && x.pct < 0.4 ? ' low' : '') }, h('i', { style: 'width:' + Math.round((x.pct || 0) * 100) + '%' })),
+        h('div', { class: 'hl-sub muted', text: weekHabitSub(x) }));
+    })));
+
+    root.appendChild(h('h2', { class: 'sect', text: t('daysTitle') }));
+    root.appendChild(h('div', { class: 'card days' }, wk.days.map(function (d) {
+      var cls = 'dayrow' + (d.date === today ? ' now' : '') + (d.future ? ' future' : '');
+      return h('button', { class: cls, disabled: d.future, onclick: function () { ui.date = d.date; ui.tab = 'today'; render(); } },
+        h('span', { class: 'dr-date', text: dfmt(d.date, { weekday: 'short', day: 'numeric' }) }),
+        h('span', { class: 'bar thin' }, h('i', { style: 'width:' + Math.round((d.score || 0) * 100) + '%' })),
+        h('span', { class: 'dr-pct', text: d.future ? '' : pc(d.score) }));
+    })));
+    return root;
+  }
+
+  /** Last 12 weeks as chart items; pick(weekStats) returns {value, extra} or null. */
+  function weeksChart(key, st, pick) {
+    var cw = E.weekStart(today), items = [];
+    for (var i = 11; i >= 0; i--) {
+      var ws = E.addDays(cw, -7 * i), wk = E.weekStats(st, ws, today), r = pick(wk);
+      items.push({ label: dfmt(ws, { day: 'numeric', month: 'numeric' }), value: r ? r.value : null, current: ws === cw,
+        tip: t('weekOf', { d: dfmt(ws, { day: 'numeric', month: 'short' }) }) + ': ' + (r ? pc(r.value) + (r.extra || '') : t('noData')) });
+    }
+    if (!items.some(function (x) { return x.value !== null; })) return null;
+    return chartBlock(key, t('cWeeks'), function (w) { return C.bars(items, w, { label: t('cWeeks'), labelW: 40 }); },
+      tableOf([t('week'), t('adherence')], items.map(function (x) { return [x.tip.split(':')[0], x.value === null ? '–' : pc(x.value)]; })));
+  }
+
   // ---------- MONTH ----------
   function viewMonth() {
     var st = S.state(), mk = ui.month || E.monthKey(today);
@@ -257,6 +327,8 @@
       kpi(t('kStreak'), String(ps.streak), null, streakWord(ps.streak).replace(String(ps.streak), '').trim()),
       kpi(t('kToday'), pc(todayScore), todayScore),
       kpi(t('kMonths'), String(ps.included), null, t('kMonthsSub', { n: ps.months.length }))));
+
+    add(root, weeksChart('weeks', st, function (wk) { return wk.weighted === null || !wk.elapsed ? null : { value: wk.weighted }; }));
 
     // monthly evolution (only when the period spans months)
     var monthsShown = ps.months.slice(-12);
@@ -363,6 +435,12 @@
       kpi(t('kStreak'), streak === null ? '–' : String(streak), null, streak === null ? t('monthlyGoalShort') : streakWord(streak).replace(String(streak), '').trim()),
       kpi(t('kTotal'), px ? r2(px.total) : '–', null, unitTxt),
       kpi(t('kAvg'), px ? r2(px.avg) : '–', null, unitTxt ? unitTxt + '/' + t('dayShort') : '')));
+
+    if (!monthly) add(root, weeksChart('hweeks', st, function (wk) {
+      var x = null; wk.habits.forEach(function (y) { if (y.id === hb.id) x = y; });
+      if (!x || x.pct === null) return null;
+      return { value: x.pct, extra: isCheck ? ' · ' + t('daysMet', { a: x.met, b: x.days }) : ' · ' + t('avgDay', { n: r2(x.avg) + u }) };
+    }));
 
     // adherence by month for this habit
     var months = ps.months.slice(-12);
@@ -779,7 +857,7 @@
   }
 
   // ---------- shell ----------
-  var TABS = [['today', 'tabToday', 'M4 12.5l5 5L20 6.5'], ['month', 'tabMonth', 'M5 5h14v15H5zM5 10h14M9 3v4M15 3v4'], ['panel', 'tabPanel', 'M5 20V11M12 20V5M19 20v-8'], ['habits', 'tabHabits', 'M4 7h16M4 12h16M4 17h10']];
+  var TABS = [['today', 'tabToday', 'M4 12.5l5 5L20 6.5'], ['week', 'tabWeek', 'M4 6h16v13H4zM4 10h16M8 14h8'], ['month', 'tabMonth', 'M5 5h14v15H5zM5 10h14M9 3v4M15 3v4'], ['panel', 'tabPanel', 'M5 20V11M12 20V5M19 20v-8'], ['habits', 'tabHabits', 'M4 7h16M4 12h16M4 17h10']];
   function buildShell() {
     var app = $('#app'); app.innerHTML = '';
     var top = h('header', { class: 'topbar' }, h('div', { class: 'brand', text: t('appName') }),
@@ -802,6 +880,7 @@
     draws = [];
     var node;
     if (ui.tab === 'today') node = viewToday();
+    else if (ui.tab === 'week') node = viewWeek();
     else if (ui.tab === 'month') node = viewMonth();
     else if (ui.tab === 'panel') node = viewPanel();
     else node = viewHabits();

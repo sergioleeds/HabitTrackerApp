@@ -27,6 +27,7 @@ jobs:
         run: |
           node tests/engine.test.js
           node tests/engine_created.test.js
+          node tests/engine_week.test.js
           node tests/gas.test.js
           node tests/store_sync.test.js
 

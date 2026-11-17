@@ -1,6 +1,7 @@
 /* Habit engine: pure calculation rules, no DOM, no storage.
  * Same rules as HabitTracker_v2.gs:
  *  - Daily habits feed the day score (weighted). Monthly habits are judged against a pace.
+ *  - Weeks run Monday to Sunday and judge daily habits with the same rules as a month.
  *  - Numbers: "strict" caps each day at the goal, "average" lets a big day cover missed ones.
  *  - Streaks: day score >= threshold (overall) or goal met (per habit); today may still be open.
  * Dates are 'YYYY-MM-DD' strings, months are 'YYYY-MM'. Works in browser, Node and Apps Script. */
@@ -166,6 +167,49 @@
     return { key: mk, dim: dim, elapsed: el, habits: habits, weighted: sw > 0 ? sp / sw : null, days: days };
   }
 
+  // ---------- week stats (Monday to Sunday) ----------
+  /** Monday of the week that contains d. */
+  function weekStart(d) { return addDays(d, -((weekday(d) + 6) % 7)); }
+
+  /** Daily habits judged over one week, same rules as a month: strict caps each day at its goal,
+   *  average lets a big day cover a short one. Monthly-goal habits are left out (they have no weekly goal).
+   *  A week can span two months: each day uses the config of its own month. */
+  function weekStats(state, ws, today) {
+    ws = weekStart(ws);
+    var we = addDays(ws, 6), per = {}, order = [], days = [], i, d;
+    for (i = 0; i < 7; i++) {
+      d = addDays(ws, i);
+      var future = d > today;
+      days.push({ date: d, score: future ? null : dayScore(state, d), future: future });
+      if (future) continue;
+      var mk = monthKey(d);
+      activeIn(state, mk).forEach(function (a) {
+        if (a.c.period !== 'daily' || +d.slice(8, 10) < startDay(state, a.h, mk)) return;
+        var p = per[a.h.id], v = val(state, d, a.h.id);
+        if (!p) { p = per[a.h.id] = { h: a.h, c: a.c, total: 0, capped: 0, goalSum: 0, met: 0, days: 0 }; order.push(a.h.id); }
+        p.c = a.c;                                                   // latest config wins for labels
+        p.days++;
+        p.goalSum += a.h.type === 'check' ? 1 : a.c.goal;
+        if (met(a.h, a.c, v)) p.met++;
+        if (a.h.type === 'check') { if (v === true) { p.total++; p.capped++; } }
+        else { p.total += num(v); p.capped += Math.min(num(v), a.c.goal); }
+      });
+    }
+    var sw = 0, sp = 0;
+    var habits = order.map(function (id) {
+      var p = per[id], h = p.h, c = p.c, pct = null;
+      if (p.goalSum > 0) pct = h.type === 'number' && c.method === 'average' ? Math.min(1, p.total / p.goalSum) : p.capped / p.goalSum;
+      if (pct !== null) { sw += +c.weight || 0; sp += (+c.weight || 0) * pct; }
+      return {
+        id: id, name: h.name, type: h.type, unit: h.unit || '', goal: c.goal, period: 'daily', method: c.method, weight: c.weight,
+        total: p.total, target: p.goalSum, pct: pct, met: p.met, days: p.days, avg: p.days ? p.total / p.days : 0,
+        missing: Math.max(0, p.goalSum - p.total)
+      };
+    });
+    var el = days.filter(function (x) { return !x.future; }).length;
+    return { start: ws, end: we, elapsed: el, habits: habits, weighted: sw > 0 ? sp / sw : null, days: days };
+  }
+
   // ---------- streaks ----------
   function dayOk(state, d, threshold) {
     var s = dayScore(state, d);
@@ -309,7 +353,7 @@
     pad: pad, addDays: addDays, monthKey: monthKey, addMonths: addMonths, daysInMonth: daysInMonth,
     monthStart: monthStart, monthEnd: monthEnd, localToday: localToday, monthsBetween: monthsBetween,
     weekday: weekday, cfgFor: cfgFor, sortedHabits: sortedHabits, activeIn: activeIn, firstMonth: firstMonth,
-    dayScore: dayScore, monthStats: monthStats, elapsedDays: elapsedDays,
+    dayScore: dayScore, monthStats: monthStats, elapsedDays: elapsedDays, weekStart: weekStart, weekStats: weekStats,
     overallStreak: overallStreak, habitStreak: habitStreak, overallStreakAt: overallStreakAt, habitStreakAt: habitStreakAt,
     periodRange: periodRange, periodStats: periodStats, pendingToday: pendingToday, stepFor: stepFor, clean: clean,
     val: val, met: met, hasLogs: hasLogs, startDay: startDay
