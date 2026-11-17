@@ -1111,9 +1111,16 @@
           if (w.state === 'installed' && navigator.serviceWorker.controller) toast(t('updateReady'), t('updateNow'), function () { w.postMessage('skip'); });
         });
       }
-      if (reg.waiting && navigator.serviceWorker.controller) toast(t('updateReady'), t('updateNow'), function () { reg.waiting.postMessage('skip'); });
+      // A version already waiting when the app opens: apply it now (logs are saved as they happen, nothing is lost).
+      if (reg.waiting && navigator.serviceWorker.controller) reg.waiting.postMessage('skip');
       reg.addEventListener('updatefound', function () { if (reg.installing) watch(reg.installing); });
       setInterval(function () { reg.update().catch(function () {}); }, 3600 * 1000);
+      // Installed apps on phones resume from the background without reloading: check on every return,
+      // and apply a waiting version as soon as the app is hidden so the next open is already up to date.
+      document.addEventListener('visibilitychange', function () {
+        if (document.visibilityState === 'visible') reg.update().catch(function () {});
+        else if (reg.waiting && navigator.serviceWorker.controller) reg.waiting.postMessage('skip');
+      });
     }).catch(function () {});
     var reloading = false;
     navigator.serviceWorker.addEventListener('controllerchange', function () { if (reloading) return; reloading = true; location.reload(); });
