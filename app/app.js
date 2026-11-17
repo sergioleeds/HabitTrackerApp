@@ -102,8 +102,23 @@
     var act = E.activeIn(st, mk);
     var score = E.dayScore(st, date);
     var streak = E.overallStreak(st, today, thr());
-    var daily = act.filter(function (a) { return a.c.period === 'daily'; });
-    var doneN = daily.filter(function (a) { return E.met(a.h, a.c, E.val(st, date, a.h.id)); }).length;
+    // Which daily habits enter the day %, and what else is on screen but outside it (and why).
+    var day = +date.slice(8, 10), counted = [], outside = [], allOk = true;
+    act.forEach(function (a) {
+      var hb = a.h, c = a.c, v = E.val(st, date, hb.id);
+      if (c.period === 'daily') {
+        var sd = E.startDay(st, hb, mk), ok = E.met(hb, c, v);
+        if (!ok) allOk = false;
+        if (day < sd) outside.push(t('nsStarts', { name: hb.name, d: dfmt(mk + '-' + E.pad(sd), { day: 'numeric', month: 'short' }) }));
+        else if (!(+c.weight > 0)) outside.push(t('nsWeight', { name: hb.name }));
+        else counted.push(ok);
+        return;
+      }
+      var pr = periodProgress(st, a, date, by[hb.id]);            // same figures the row shows
+      if (pr.pct !== null && pr.pct < 1 - 1e-9) allOk = false;
+      outside.push(t(c.period === 'weekly' ? 'nsWeekly' : 'nsMonthly', { name: hb.name, p: progressText(hb, c, pr.total, pr.avg) }));
+    });
+    var doneN = counted.filter(Boolean).length;
 
     var root = h('div', { class: 'page' });
     root.appendChild(h('div', { class: 'datebar' },
@@ -122,7 +137,8 @@
     var ringBox = h('div', { class: 'ring' }); ringBox.innerHTML = C.ring(score, 92, t('dayScore') + ' ' + pc(score));
     root.appendChild(h('section', { class: 'summary' }, ringBox,
       h('div', { class: 'facts' },
-        h('div', { class: 'fact-big' }, score === 1 ? t('dayComplete') : t('doneOf', { a: doneN, b: daily.length })),
+        h('div', { class: 'fact-big' }, score === 1 && allOk ? t('dayComplete') : t('doneOfDaily', { a: doneN, b: counted.length })),
+        outside.length ? h('div', { class: 'fact muted small', text: t('notInScore', { list: outside.join(' · ') }) }) : null,
         h('div', { class: 'fact' }, t('streakLabel') + ': ', h('strong', { text: streakWord(streak) })),
         h('div', { class: 'fact muted' }, t('weekSoFar') + ': ', h('strong', { text: pc(E.weekStats(st, date, today).weighted) }), ' · ',
           t('monthSoFar') + ': ', h('strong', { text: pc(ms.weighted) })))));
@@ -154,19 +170,28 @@
         h('button', { class: 'btn', text: t('loadExamples'), onclick: loadExamples })));
   }
 
+  /** Progress of a weekly/monthly habit as the Today row shows it: the week of the date, or the month so far. */
+  function periodProgress(st, a, date, bm) {
+    if (a.c.period !== 'weekly') return bm;
+    var ws = E.weekStart(date), wr = E.weeklyHabitWeek(st, a.h, ws, date < today ? E.addDays(ws, 6) : today);
+    return { total: E.clean(wr.total), pct: wr.pct, avg: wr.avg };
+  }
   function habitRow(a, date, bm, mk) {
     var st = S.state(), hb = a.h, c = a.c, v = E.val(st, date, hb.id), id = hb.id;
     var isCur = mk === E.monthKey(today);
     if (c.period === 'weekly') {                       // judge against the week of the shown date
-      var wr = E.weeklyHabitWeek(st, hb, E.weekStart(date), date < today ? E.addDays(E.weekStart(date), 6) : today);
-      bm = { total: E.clean(wr.total), pct: wr.pct, avg: wr.avg };
+      bm = periodProgress(st, a, date, bm);
       isCur = E.weekStart(date) === E.weekStart(today);
     }
+    var sdRow = c.period === 'daily' ? E.startDay(st, hb, mk) : 1;
+    var notYet = c.period === 'daily' && +date.slice(8, 10) < sdRow
+      ? t('rowNotCounting', { d: dfmt(mk + '-' + E.pad(sdRow), { day: 'numeric', month: 'short' }) }) : '';
     var periodWord = c.period === 'weekly' ? t('thisWeekLc') : t('thisMonth');
     if (hb.type === 'check') {
       var on = v === true, sub = '';
       if (c.period !== 'daily') sub = progressText(hb, c, bm.total, bm.avg) + ' ' + periodWord;
       else { var sk = E.habitStreak(st, id, today); if (sk >= 2 && date === today) sub = t('streakShort', { n: sk }); }
+      if (notYet) sub = notYet;
       return h('button', {
         class: 'row check' + (on ? ' on' : ''), role: 'checkbox', 'aria-checked': on ? 'true' : 'false',
         onclick: function () { S.setLog(date, id, on ? null : true); }
@@ -190,6 +215,7 @@
       var miss = c.goal * E.elapsedDays(mk, today) - bm.total;
       sub2 = miss > 0.0001 ? t('behind', { n: nf(Math.round(miss * 100) / 100), u: hb.unit || '' }) : t('onTrack');
     } else if (E.met(hb, c, v)) sub2 = t('goalMet');
+    if (notYet) sub2 = notYet;
     var unitTxt = hb.unit ? ' ' + hb.unit : '';
     var valBtn = h('button', { class: 'val', 'aria-label': t('editValue', { name: hb.name }), onclick: function (ev) { editValue(ev.currentTarget, date, id, x); } }, mx && typeof v !== 'number' ? '–' : nf(x) + unitTxt);
     return h('div', { class: 'row num' + (E.met(hb, c, v) && c.period === 'daily' ? ' met' : '') + (mx ? ' limit' : '') + (over ? ' over' : ''), style: '--fill:' + Math.round(fill * 100) + '%' },
