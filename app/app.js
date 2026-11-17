@@ -262,6 +262,7 @@
     if (x.period === 'weekly') return (x.basis === 'avg' ? t('avgOf', { a: r2(x.avg), b: r2(x.goal) + u }) : r2(x.total) + ' / ' + r2(x.goal) + (x.unit ? u : x.type === 'check' ? ' ' + t('timesWord') : '')) + ' · ' +
       (x.pct === null ? '' : x.pct >= 1 - 1e-9 ? (x.total >= x.target - 1e-9 ? t('goalMet') : t('onPace')) : t('belowPace'));
     if (x.type === 'check') return t('daysMet', { a: x.met, b: x.days });
+    if (x.dir === 'max') return t('daysWithin', { a: x.met, b: x.days });   // a daily limit: days within it (unlogged ones are not)
     var s = r2(x.total) + ' / ' + r2(x.target) + u + ' · ' + t('avgDay', { n: r2(x.avg) + u });
     if (x.method === 'average' && x.dir !== 'max') s += ' · ' + (x.missing > 0.0001 ? t('weekMissing', { n: r2(x.missing) + u }) : t('onTrack'));
     else s += ' · ' + t('daysMet', { a: x.met, b: x.days });
@@ -495,6 +496,127 @@
     return root;
   }
 
+  // ----- limit habits ("como máximo"): real amounts against the limit -----
+  function limitPerDay(c, d) {
+    if (c.period === 'daily' || c.basis === 'avg') return c.goal;
+    return c.period === 'weekly' ? c.goal / 7 : c.goal / E.daysInMonth(E.monthKey(d));
+  }
+  /** One day of a limit habit, or null when it does not count that day (not active yet, future). */
+  function limitDay(st, hb, d) {
+    var mk = E.monthKey(d), c = E.cfgFor(hb, mk);
+    if (!c || !E.isMax(hb, c) || d > today || +d.slice(8, 10) < E.startDay(st, hb, mk)) return null;
+    var v = E.val(st, d, hb.id), lim = limitPerDay(c, d);
+    return { d: d, v: typeof v === 'number' ? v : null, lim: lim, over: typeof v === 'number' && v > lim + 1e-9 };
+  }
+  function limitSummary(st, hb, dates) {
+    var s = { days: 0, within: 0, over: 0, missing: 0, sum: 0, logged: 0, excess: 0, avg: null };
+    dates.forEach(function (d) {
+      var x = limitDay(st, hb, d);
+      if (!x) return;
+      s.days++;
+      if (x.v === null) { s.missing++; return; }
+      s.logged++; s.sum += x.v;
+      if (x.over) { s.over++; s.excess += x.v - x.lim; } else s.within++;
+    });
+    if (s.logged) s.avg = s.sum / s.logged;
+    return s;
+  }
+  function limitLegend(lim, u) {
+    return h('div', { class: 'legend' }, h('span', { class: 'lg bar-lg' }, t('lgLogged')), h('span', { class: 'lg over-lg' }, t('overLimit')),
+      h('span', { class: 'lg lim-lg' }, t('lgLimit', { n: nf(Math.round(lim * 100) / 100) + u })), h('span', { class: 'lg miss-lg' }, t('notLogged')));
+  }
+  /** Day bars in real units with the limit line; unlogged days get a dashed marker. */
+  function limitChart(key, title, st, hb, dates) {
+    var u = hb.unit ? ' ' + hb.unit : '', r2 = function (n) { return nf(Math.round(n * 100) / 100); }, short = dates.length <= 7, lim = null;
+    var items = dates.map(function (d) {
+      var x = limitDay(st, hb, d), lab = short ? cap(dfmt(d, { weekday: 'short' })).replace('.', '') : String(+d.slice(8, 10));
+      var when = dfmt(d, { weekday: 'short', day: 'numeric', month: 'short' });
+      if (!x) return { label: lab, value: null, tip: when };
+      if (lim === null) lim = x.lim;
+      return { label: lab, value: x.v, over: x.over, missing: x.v === null, current: d === today,
+        tip: when + ': ' + (x.v === null ? t('notLogged') : r2(x.v) + u + ' · ' + (x.over ? t('overBy', { n: r2(x.v - x.lim) + u }) : t('withinLimit'))) };
+    });
+    if (lim === null) return null;
+    return chartBlock(key, title, function (w) { return C.amounts(items, w, { label: title, limit: lim, fmt: nf, labelW: short ? 34 : 22 }); },
+      tableOf([t('day'), t('value')], items.filter(function (x) { return x.tip.indexOf(': ') > 0; }).map(function (x) { return x.tip.split(': '); })),
+      limitLegend(lim, u));
+  }
+  /** Average per week (over the logged days) against the limit. */
+  function limitWeeksChart(key, st, hb, from, to) {
+    var u = hb.unit ? ' ' + hb.unit : '', r2 = function (n) { return nf(Math.round(n * 100) / 100); }, items = [], lim = null;
+    for (var ws = E.weekStart(from), g = 0; ws <= to && g < 60; ws = E.addDays(ws, 7), g++) {
+      var sm = limitSummary(st, hb, datesBetween(ws, E.addDays(ws, 6))), x0 = null;
+      datesBetween(ws, E.addDays(ws, 6)).some(function (d) { x0 = limitDay(st, hb, d); return !!x0; });
+      if (x0 && lim === null) lim = x0.lim;
+      var label = dfmt(ws, { day: 'numeric', month: 'numeric' }), when = t('weekOf', { d: dfmt(ws, { day: 'numeric', month: 'short' }) });
+      items.push({ label: label, value: sm.avg, over: sm.avg !== null && x0 && sm.avg > x0.lim + 1e-9, missing: sm.days > 0 && sm.avg === null, current: ws === E.weekStart(today),
+        tip: when + ': ' + (!sm.days ? t('noData') : sm.avg === null ? t('notLogged') : t('avgDay', { n: r2(sm.avg) + u }) + ' · ' + t('daysWithin', { a: sm.within, b: sm.days })) });
+    }
+    if (lim === null || items.length < 2) return null;
+    return chartBlock(key, t('cAvgWeeks'), function (w) { return C.amounts(items, w, { label: t('cAvgWeeks'), limit: lim, fmt: nf, labelW: 40 }); },
+      tableOf([t('week'), t('value')], items.map(function (x) { return x.tip.split(': '); })), limitLegend(lim, u));
+  }
+  function limitPanel(root, st, hb, c, r) {
+    var u = hb.unit ? ' ' + hb.unit : '', r2 = function (n) { return nf(Math.round(n * 100) / 100); };
+    var perDay = (hb.unit || '') + '/' + t('dayShort'), limTxt = t('maxGoal', { n: r2(limitPerDay(c, r.end)) + u });
+    var streak = c.period === 'daily' ? habitStreakOn(st, hb.id, r.end) : null;
+    if (r.p === 'day') {
+      var x = limitDay(st, hb, r.a), last = datesBetween(E.addDays(r.a, -13), r.a), sm = limitSummary(st, hb, last);
+      root.appendChild(h('section', { class: 'kpis' },
+        kpi(t('thatDayCap'), x && x.v !== null ? r2(x.v) + u : '–', null, !x ? '' : x.v === null ? t('notLogged') : x.over ? t('overBy', { n: r2(x.v - x.lim) + u }) : t('withinLimit')),
+        kpi(t('kWithin14'), sm.within + '/' + sm.days, null, t('kWithinSub')),
+        kpi(t('kAvgLogged14'), sm.avg === null ? '–' : r2(sm.avg), null, perDay + ' · ' + limTxt),
+        streak !== null ? kpi(streakLabel(r), String(streak), null, streakWord(streak).replace(String(streak), '').trim())
+          : kpi(t('kMissing'), String(sm.missing), null, t('daysWord'))));
+      add(root, limitChart('ld14', t('cLast14'), st, hb, last));
+    } else {
+      var all = datesBetween(r.d0, r.d1), sm2 = limitSummary(st, hb, all);
+      root.appendChild(h('section', { class: 'kpis' },
+        kpi(t('kWithin'), String(sm2.within), null, t('kWithinOf', { n: sm2.days })),
+        kpi(t('kAvgLogged'), sm2.avg === null ? '–' : r2(sm2.avg), null, perDay + ' · ' + limTxt),
+        kpi(t('kOverDays'), String(sm2.over), null, sm2.excess > 0 ? t('kOverSum', { n: r2(sm2.excess) + u }) : t('daysWord')),
+        kpi(t('kMissing'), String(sm2.missing), null, t('daysWord'))));
+      if (r.p === 'week') add(root, limitChart('lweek', t('daysTitle'), st, hb, all));
+      else {
+        if (r.p !== 'month' && r.d0 <= today) add(root, limitWeeksChart('lweeks', st, hb, r.d0, r.end));
+        var lk = E.monthKey(r.end);
+        if (r.d0 <= today) add(root, limitChart('lmonth', t('cHabitDaily', { m: cap(mfmt(lk)) }), st, hb, datesBetween(E.monthStart(lk), E.monthEnd(lk))));
+        if (r.p === 'month') add(root, limitWeeksChart('lweeks', st, hb, r.d0, r.end));
+      }
+    }
+    if (c.period === 'weekly') {
+      var wr = E.weeklyHabitWeek(st, hb, E.weekStart(r.end), r.end);
+      root.appendChild(h('p', { class: 'muted rangeline', text: t('budgetWeek', { p: progressText(hb, c, wr.total, wr.avg) }) }));
+    }
+    root.appendChild(cfgLine(hb, c));
+  }
+
+  // ----- "No cumplidos": what failed and why -----
+  function missedCard(items) {
+    return h('section', { class: 'card' }, h('h2', { class: 'sect in', text: t('missedTitle') }),
+      items.length ? h('ul', { class: 'misslist' }, items.map(function (x) { return h('li', null, h('span', { class: 'mn', text: x.name }), h('span', { class: 'mr', text: x.why })); }))
+        : h('p', { class: 'muted', text: t('allMet') }));
+  }
+  function missedOnDay(st, d) {
+    var mk = E.monthKey(d), out = [], r2 = function (n) { return nf(Math.round(n * 100) / 100); };
+    E.activeIn(st, mk).forEach(function (a) {
+      var hb = a.h, c = a.c, v = E.val(st, d, hb.id), u = hb.unit ? ' ' + hb.unit : '';
+      if (c.period === 'daily') {
+        if (+d.slice(8, 10) < E.startDay(st, hb, mk) || E.met(hb, c, v)) return;
+        var why = hb.type === 'check' ? t('notDone') : typeof v !== 'number' ? t('notLogged')
+          : E.isMax(hb, c) ? t('overBy', { n: r2(v - c.goal) + u }) : r2(v) + ' / ' + r2(c.goal) + u;
+        out.push({ name: hb.name, why: why });
+        return;
+      }
+      var pr;
+      if (c.period === 'weekly') { var wr = E.weeklyHabitWeek(st, hb, E.weekStart(d), d); pr = { total: wr.total, avg: wr.avg, pct: wr.pct }; }
+      else E.monthStats(st, mk, d).habits.forEach(function (y) { if (y.id === hb.id) pr = y; });
+      if (!pr || pr.pct === null || pr.pct >= 1 - 1e-9) return;
+      out.push({ name: hb.name, why: progressText(hb, c, pr.total, pr.avg) + ' · ' + (E.isMax(hb, c) ? t('overLimit') : t('belowPace')) });
+    });
+    return out;
+  }
+
   // ----- one day -----
   function panelDay(root, st, r, hb) {
     var d = r.a, mk = E.monthKey(d), act = E.activeIn(st, mk);
@@ -522,12 +644,14 @@
         }
         return x;
       }).filter(Boolean);
+      root.appendChild(missedCard(missedOnDay(st, d)));
       if (list.length) root.appendChild(habitsChart('dhabits', list, function (x) { return x.extra; }));
       root.appendChild(scoreBars('d14', t('cLast14'), st, datesBetween(E.addDays(d, -13), d)));
       return;
     }
     var c = E.cfgFor(hb, mk);
     if (!c || (c.period === 'daily' && +d.slice(8, 10) < E.startDay(st, hb, mk))) { root.appendChild(h('p', { class: 'muted pad', text: t('noHabitDay') })); return; }
+    if (E.isMax(hb, c)) { limitPanel(root, st, hb, c, r); return; }
     var u = hb.unit ? ' ' + hb.unit : '';
     if (c.period === 'daily') {
       var ratio = E.fraction(hb, c, E.val(st, d, hb.id)), hs = habitStreakOn(st, hb.id, d), wx = null;
@@ -562,6 +686,8 @@
         kpi(t('kVsPrev'), weekDelta(wk.weighted, prev.weighted), null, t('ptsWord')),
         kpi(streakLabel(r), String(sk), null, streakWord(sk).replace(String(sk), '').trim()),
         daysOk(st, days.filter(function (d) { return d <= today; }))));
+      root.appendChild(missedCard(wk.habits.filter(function (x) { return x.pct !== null && x.pct < 1 - 1e-9; })
+        .map(function (x) { return { name: x.name, why: pc(x.pct) + ' · ' + weekHabitSub(x) }; })));
       root.appendChild(scoreBars('wdays', t('daysTitle'), st, days));
       root.appendChild(habitsChart('whabits', wk.habits, weekHabitSub));
       add(root, weeksChart('weeks', st, past12, r.d0, function (w) { return w.weighted === null || !w.elapsed ? null : { value: w.weighted }; }));
@@ -571,6 +697,7 @@
     var x = null; wk.habits.forEach(function (y) { if (y.id === hb.id) x = y; });
     var cfg = E.cfgFor(hb, E.monthKey(r.end)) || E.cfgFor(hb, E.monthKey(r.d0));
     if (!cfg) { root.appendChild(h('p', { class: 'muted pad', text: t('noHabitDay') })); return; }
+    if (E.isMax(hb, cfg)) { limitPanel(root, st, hb, cfg, r); return; }
     var u = hb.unit ? ' ' + hb.unit : '', r2 = function (n) { return nf(Math.round(n * 100) / 100); };
     var unitTxt = hb.type === 'check' && !hb.unit ? t('daysWord') : (hb.unit || '');
     if (cfg.period === 'monthly') {
@@ -660,6 +787,7 @@
     var cur = E.monthKey(today), px = null;
     ps.habits.forEach(function (x) { if (x.id === hb.id) px = x; });
     var cfg = E.cfgFor(hb, E.monthKey(r.end)) || E.cfgFor(hb, cur) || hb.versions[hb.versions.length - 1];
+    if (E.isMax(hb, cfg)) { limitPanel(root, st, hb, cfg, r); return; }
     var u = hb.unit ? ' ' + hb.unit : '', isCheck = hb.type === 'check', monthly = cfg.period === 'monthly', weekly = cfg.period === 'weekly';
     var r2 = function (x) { return nf(Math.round(x * 100) / 100); };
     var streak = monthly || weekly ? null : habitStreakOn(st, hb.id, r.end);

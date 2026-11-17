@@ -91,6 +91,42 @@
     return s + '</svg>';
   }
 
+  /** Vertical bars in real units (e.g. hours) against a limit line.
+   *  items: [{label, value|null, over, missing, current, tip}]; o: {limit, fmt, label, labelW} */
+  function amounts(items, w, o) {
+    o = o || {};
+    var h = o.h || 190, padL = 38, padR = 8, padT = 12, padB = 26, fmt = o.fmt || function (x) { return String(x); };
+    var iw = w - padL - padR, ih = h - padT - padB, n = items.length || 1;
+    var top = o.limit || 0;
+    items.forEach(function (it) { if (it.value !== null && it.value !== undefined && it.value > top) top = it.value; });
+    top = top > 0 ? top * 1.1 : 1;
+    var slot = iw / n, bw = Math.max(3, Math.min(26, slot * 0.62));
+    var yOf = function (v) { return padT + ih * (1 - v / top); };
+    var s = '<svg viewBox="0 0 ' + w + ' ' + h + '" width="' + w + '" height="' + h + '" role="img" aria-label="' + esc(o.label || '') + '">';
+    [0, 0.5, 1].forEach(function (g) {
+      var y = padT + ih * (1 - g);
+      s += '<line class="grid' + (g === 0 ? ' base' : '') + '" x1="' + padL + '" x2="' + (w - padR) + '" y1="' + r1(y) + '" y2="' + r1(y) + '"/>';
+      s += '<text class="axis" x="' + (padL - 6) + '" y="' + r1(y + 4) + '" text-anchor="end">' + esc(fmt(Math.round(top * g * 10) / 10)) + '</text>';
+    });
+    var every = Math.max(1, Math.ceil(n / Math.floor(iw / (o.labelW || 34))));
+    items.forEach(function (it, i) {
+      var cx = padL + slot * i + slot / 2, x = cx - bw / 2;
+      if (it.value !== null && it.value !== undefined) {
+        var y = yOf(it.value), bh = padT + ih - y;
+        if (it.value > 0 && bh < 2) { bh = 2; y = padT + ih - 2; }
+        var rr = Math.min(4, bw / 2, bh);
+        if (bh > 0) s += '<path class="cbar' + (it.over ? ' over' : '') + (it.current ? ' now' : '') + '" d="M' + r1(x) + ' ' + r1(padT + ih) + 'V' + r1(y + rr) + 'Q' + r1(x) + ' ' + r1(y) + ' ' + r1(x + rr) + ' ' + r1(y) +
+          'H' + r1(x + bw - rr) + 'Q' + r1(x + bw) + ' ' + r1(y) + ' ' + r1(x + bw) + ' ' + r1(y + rr) + 'V' + r1(padT + ih) + 'Z"/>';
+      } else if (it.missing) {
+        s += '<circle class="miss" cx="' + r1(cx) + '" cy="' + r1(padT + ih - 5) + '" r="' + r1(Math.min(4, bw / 2)) + '"/>';
+      }
+      s += '<rect class="hit" x="' + r1(padL + slot * i) + '" y="' + padT + '" width="' + r1(slot) + '" height="' + ih + '" data-tip="' + esc(it.tip || '') + '" tabindex="-1"/>';
+      if (i % every === 0 || i === n - 1 && every === 1) s += '<text class="axis" x="' + r1(cx) + '" y="' + (h - 8) + '" text-anchor="middle">' + esc(it.label) + '</text>';
+    });
+    if (o.limit) s += '<line class="thr limit" x1="' + padL + '" x2="' + (w - padR) + '" y1="' + r1(yOf(o.limit)) + '" y2="' + r1(yOf(o.limit)) + '"/>';
+    return s + '</svg>';
+  }
+
   function truncate(s, n) { s = String(s); return s.length > n ? s.slice(0, Math.max(1, n - 1)) + '…' : s; }
 
   /** Small ring for the day score. */
@@ -102,5 +138,5 @@
       '<text class="ring-txt" x="50%" y="50%" text-anchor="middle" dominant-baseline="central">' + (value === null || value === undefined ? '–' : pct(value)) + '</text></svg>';
   }
 
-  root.Charts = { bars: bars, heat: heat, hbars: hbars, ring: ring, esc: esc };
+  root.Charts = { bars: bars, amounts: amounts, heat: heat, hbars: hbars, ring: ring, esc: esc };
 })(typeof self !== 'undefined' ? self : this);
