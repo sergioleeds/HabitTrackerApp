@@ -458,6 +458,15 @@
     return 0.5;
   }
 
+  /** A number typed by the user: trims, accepts a decimal comma ("1,5"), rejects anything else ("1 3", "", "3h"). NaN when invalid. */
+  function parseNumber(raw) {
+    var x = String(raw === undefined || raw === null ? '' : raw).trim();
+    if (!/^[0-9]+([.,][0-9]+)?$/.test(x)) return NaN;
+    return Number(x.replace(',', '.'));
+  }
+  /** A unit that is only a number ("3", "1,5") is almost always a goal typed in the wrong field. */
+  function unitIsNumber(u) { return /^\s*[0-9]+([.,][0-9]+)?\s*$/.test(String(u || '')); }
+
   /** Round to avoid 0.1+0.2 noise in stored numbers. */
   function clean(x) { return Math.round(x * 1000) / 1000; }
 
@@ -468,6 +477,7 @@
     dayScore: dayScore, monthStats: monthStats, elapsedDays: elapsedDays, weekStart: weekStart, weekStats: weekStats, weeklyHabitWeek: weeklyHabitWeek,
     overallStreak: overallStreak, habitStreak: habitStreak, overallStreakAt: overallStreakAt, habitStreakAt: habitStreakAt,
     periodRange: periodRange, periodStats: periodStats, pendingToday: pendingToday, stepFor: stepFor, clean: clean,
+    parseNumber: parseNumber, unitIsNumber: unitIsNumber,
     val: val, met: met, fraction: fraction, isMax: isMax, limitPerDay: limitPerDay, limitStats: limitStats, hasLogs: hasLogs, startDay: startDay
   };
 });

@@ -107,6 +107,14 @@
     if (!p.verdict) return p.text;
     return [p.head + ' · ', h('span', { class: 'tone-' + p.tone, text: p.verdict }), p.missing ? ' · ' + p.missing : ''];
   }
+  /** Short status of a daily habit on a day, for the summary: "hecho", "pasado (5,3 de máx. 3 h)", "3 de 50 reps"… */
+  function dayStatus(hb, c, v) {
+    var u = hb.unit ? ' ' + hb.unit : '', r = function (x) { return nf(Math.round(x * 100) / 100); };
+    if (hb.type === 'check') return v === true ? t('stDone') : t('stNotDone');
+    if (typeof v !== 'number') return t('stNotLogged');
+    if (E.isMax(hb, c)) return E.met(hb, c, v) ? t('stWithin') : t('stOver', { v: r(v), g: r(c.goal) + u });
+    return E.met(hb, c, v) ? t('stDone') : t('stPartial', { v: r(v), g: r(c.goal) + u });
+  }
   function limitDaysText(ls) { return ls && ls.days ? t('daysWithin', { a: ls.within, b: ls.days }) : ''; }
   /** Progress line for a weekly/monthly goal: "22 / 56 h" or "media 7,3 / 8 h/día". */
   function progressText(hb, c, total, avg) {
@@ -130,16 +138,16 @@
       if (c.period === 'daily') {
         var sd = E.startDay(st, hb, mk), ok = E.met(hb, c, v);
         if (!ok) allOk = false;
-        if (day < sd) outside.push(t('nsStarts', { name: hb.name, d: dfmt(mk + '-' + E.pad(sd), { day: 'numeric', month: 'short' }) }));
-        else if (!(+c.weight > 0)) outside.push(t('nsWeight', { name: hb.name }));
-        else counted.push(ok);
+        if (day < sd) outside.push(t('osStarts', { name: hb.name, d: dfmt(mk + '-' + E.pad(sd), { day: 'numeric', month: 'short' }) }));
+        else if (!(+c.weight > 0)) outside.push(t('osWeight', { name: hb.name }));
+        else counted.push({ ok: ok, text: t('csItem', { name: hb.name, s: dayStatus(hb, c, v) }) });
         return;
       }
       var pr = periodProgress(st, a, date, by[hb.id]);            // same figures the row shows
       if (pr.pct !== null && pr.pct < 1 - 1e-9) allOk = false;
-      outside.push(t(c.period === 'weekly' ? 'nsWeekly' : 'nsMonthly', { name: hb.name, p: progressText(hb, c, pr.total, pr.avg) }));
+      outside.push(t('osPeriod', { name: hb.name, p: progressText(hb, c, pr.total, pr.avg), w: c.period === 'weekly' ? t('perWeekShort') : t('perMonthShort') }));
     });
-    var doneN = counted.filter(Boolean).length;
+    var doneN = counted.filter(function (x) { return x.ok; }).length;
 
     var root = h('div', { class: 'page' });
     root.appendChild(h('div', { class: 'datebar' },
@@ -159,7 +167,9 @@
     root.appendChild(h('section', { class: 'summary' }, ringBox,
       h('div', { class: 'facts' },
         h('div', { class: 'fact-big' }, score === 1 && allOk ? t('dayComplete') : t('doneOfDaily', { a: doneN, b: counted.length })),
-        outside.length ? h('div', { class: 'fact muted small', text: t('notInScore', { list: outside.join(' · ') }) }) : null,
+        counted.length ? h('div', { class: 'fact small' }, h('strong', { text: t('countsToday') + ': ' }),
+          counted.map(function (x, i) { return [i ? ' · ' : '', h('span', { class: x.ok ? 'tone-good' : 'tone-warn', text: x.text })]; })) : null,
+        outside.length ? h('div', { class: 'fact muted small', text: t('outsideScore') + ': ' + outside.join(' · ') }) : null,
         h('div', { class: 'fact' }, t('streakLabel') + ': ', h('strong', { text: streakWord(streak) })),
         h('div', { class: 'fact muted' }, t('weekSoFar') + ': ', h('strong', { text: pc(E.weekStats(st, date, today).weighted) }), ' · ',
           t('monthSoFar') + ': ', h('strong', { text: pc(ms.weighted) })))));
@@ -1001,7 +1011,6 @@
       body.appendChild(field(t('fType'), seg('type', [['check', t('typeCheck')], ['number', t('typeNumber')]], !!hb), null, hb ? t('typeLocked') : t('typeHelp')));
       if (f.type === 'number') body.appendChild(field(t('fUnit'), h('input', { class: 'inp', id: 'f-unit', type: 'text', value: f.unit, maxlength: '12', placeholder: 'reps, h, L…', oninput: function (e) { f.unit = e.target.value; } }), 'f-unit'));
       body.appendChild(field(t('fPeriod'), seg('period', [['daily', t('pDaily')], ['weekly', t('pWeekly')], ['monthly', t('pMonthly')]]), null, f.period === 'monthly' ? t('pMonthlyHelp') : f.period === 'weekly' ? t('pWeeklyHelp') : t('pDailyHelp')));
-      if (f.type === 'check' && f.period !== 'daily') body.appendChild(field(t('fUnit'), h('input', { class: 'inp', id: 'f-unit', type: 'text', value: f.unit, maxlength: '12', placeholder: t('unitTimesPh'), oninput: function (e) { f.unit = e.target.value; } }), 'f-unit'));
       if (f.type === 'number') body.appendChild(field(t('fDir'), seg('dir', [['min', t('dMin')], ['max', t('dMax')]]), null, f.dir === 'max' ? t('dMaxHelp') : t('dMinHelp')));
       var avgGoal = f.type === 'number' && f.period !== 'daily';
       if (avgGoal) body.appendChild(field(t('fBasis'), seg('basis', [['total', t('bTotal')], ['avg', t('bAvg')]]), null,
@@ -1011,6 +1020,7 @@
         var gk = avgGoal && f.basis === 'avg' ? 'fGoalAvg' : f.period === 'monthly' ? 'fGoalMonth' : f.period === 'weekly' ? 'fGoalWeek' : 'fGoalDay';
         body.appendChild(field(t(f.type === 'number' && f.dir === 'max' ? gk + 'Max' : gk), goalIn, 'f-goal'));
       }
+      if (f.type === 'check' && f.period !== 'daily') body.appendChild(field(t('fUnit'), h('input', { class: 'inp', id: 'f-unit', type: 'text', value: f.unit, maxlength: '12', placeholder: t('unitTimesPh'), oninput: function (e) { f.unit = e.target.value; } }), 'f-unit', t('unitHelp')));
       if (f.type === 'number' && f.period === 'daily' && f.dir !== 'max') {
         body.appendChild(field(t('fMethod'), seg('method', [['strict', t('mStrict')], ['average', t('mAverage')]]), null, f.method === 'average' ? t('mAverageHelp') : t('mStrictHelp')));
       }
@@ -1033,17 +1043,15 @@
     function field(label, ctl, forId, help) {
       return h('div', { class: 'field' }, h('label', { for: forId, text: label }), ctl, help ? h('div', { class: 'help', text: help }) : null);
     }
-    function parseNum(raw, fallback) {
-      if (raw === undefined) return fallback;
-      var n = Number(String(raw).trim().replace(',', '.'));
-      return isFinite(n) && String(raw).trim() !== '' ? n : NaN;
-    }
+    function parseNum(raw, fallback) { return raw === undefined ? fallback : E.parseNumber(raw); }
     function save(err) {
       var name = f.name.trim();
       if (!name) { err.textContent = t('errName'); return; }
       var goal = f.type === 'check' && f.period === 'daily' ? 1 : parseNum(f.goalRaw, f.goal);
       var weight = parseNum(f.weightRaw, f.weight);
       if (!(goal > 0) || goal > 1e7) { err.textContent = t('errGoal'); return; }
+      var unitShown = f.type === 'number' || f.period !== 'daily';
+      if (unitShown && E.unitIsNumber(f.unit)) { err.textContent = t('errUnitNumber', { u: f.unit.trim() }); return; }
       if (!(weight > 0) || weight > 100) { err.textContent = t('errWeight'); return; }
       var method = f.type === 'number' && f.period === 'daily' && f.dir !== 'max' ? f.method : 'strict';
       var ver = { goal: goal, period: f.period, method: method, weight: weight };

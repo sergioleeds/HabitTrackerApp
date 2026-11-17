@@ -197,5 +197,12 @@ eq('pending limit logged (even over)', E.pendingToday(sx, '2026-11-12').filter(p
   eq('month % = within / days', mL.pct, ls.within / ls.days); eq('month within', ls.within, 3); eq('month days', ls.days, 20);
 }
 
+// ---------- editor input: goal must be a positive number (decimal comma ok), unit cannot be just a number ----------
+eq('parse "3"', E.parseNumber('3'), 3); eq('parse "1,5"', E.parseNumber('1,5'), 1.5); eq('parse "1.5"', E.parseNumber('1.5'), 1.5);
+eq('parse " 2 "', E.parseNumber(' 2 '), 2);
+for (const bad of ['1 3', '', '3h', '-1', '1,', 'abc']) eq('parse rejects ' + JSON.stringify(bad), isNaN(E.parseNumber(bad)) ? 1 : 0, 1);
+for (const u of ['3', '1,5', ' 4 ']) eq('unit is number ' + JSON.stringify(u), E.unitIsNumber(u) ? 1 : 0, 1);
+for (const u of ['veces', 'sesiones', '3x', '', 'h']) eq('unit ok ' + JSON.stringify(u), E.unitIsNumber(u) ? 1 : 0, 0);
+
 console.log(`${checks} checks, ${fails} failures`);
 process.exit(fails ? 1 : 0);
