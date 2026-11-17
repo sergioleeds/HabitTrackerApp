@@ -6,9 +6,10 @@
  *    gets the result of its own week, so a big week does not cover a missed one.
  *  - Weekly/monthly number goals can be a total (basis 'total', the default) or a daily average
  *    (basis 'avg': goal per day, judged over the week/month so a long day covers a short one).
- *  - Number goals can be a limit (dir 'max', e.g. screen time <= 3 h). Daily: a logged value within
- *    the limit is met, going over scores limit/value, nothing logged is not met. Weekly/monthly: a budget,
- *    used up against the pace (total) or as an average over the logged days (avg).
+ *  - Number goals can be a limit (dir 'max', e.g. screen time <= 3 h). Daily: all or nothing, a logged
+ *    value within the limit is met (100 %), going over or logging nothing is not (0 %), so the % always
+ *    equals "N of M days within". Weekly/monthly: a budget judged only on the logged days
+ *    (limit per day x logged days), so a day left blank never counts as 0 h within the limit.
  *  - Numbers: "strict" caps each day at the goal, "average" lets a big day cover missed ones.
  *  - Streaks: day score >= threshold (overall) or goal met (per habit); today may still be open.
  * Dates are 'YYYY-MM-DD' strings, months are 'YYYY-MM'. Works in browser, Node and Apps Script. */
@@ -93,7 +94,7 @@
   }
   function fraction(h, c, v) { // 0..1 credit for the day score
     if (h.type === 'check') return v === true ? 1 : 0;
-    if (isMax(h, c)) return typeof v !== 'number' ? 0 : v <= c.goal ? 1 : c.goal / v;
+    if (isMax(h, c)) return met(h, c, v) ? 1 : 0;
     return c.goal > 0 ? Math.min(1, num(v) / c.goal) : 0;
   }
   /** Budget score for a limit over a period: 1 while used <= allowed, then allowed/used. */
@@ -131,6 +132,28 @@
 
   /** Goal per day for a weekly/monthly config, given the period length in days. */
   function perDayGoal(c, len) { return c.basis === 'avg' ? c.goal : c.goal / len; }
+  /** Daily share of a limit on date d (the limit itself for daily or average-based limits). */
+  function limitPerDay(c, d) {
+    if (c.period === 'daily' || c.basis === 'avg') return c.goal;
+    return c.period === 'weekly' ? c.goal / 7 : c.goal / daysInMonth(monthKey(d));
+  }
+  /** A limit habit over [from, to] (up to today), judged only on the logged days:
+   *  sum vs allowed (limit per day x logged days), average per logged day, days within/over/not logged. */
+  function limitStats(state, h, from, to, today) {
+    var s = { days: 0, logged: 0, missing: 0, within: 0, over: 0, sum: 0, allowed: 0, excess: 0, avg: null, diff: 0, limit: null };
+    var end = to < today ? to : today, d, g = 0;
+    for (d = from; d <= end && g++ < 4000; d = addDays(d, 1)) {
+      var mk = monthKey(d), c = cfgFor(h, mk);
+      if (!isMax(h, c) || +d.slice(8, 10) < startDay(state, h, mk)) continue;
+      var lim = limitPerDay(c, d), v = val(state, d, h.id);
+      s.days++; s.limit = lim;
+      if (typeof v !== 'number') { s.missing++; continue; }
+      s.logged++; s.sum += v; s.allowed += lim;
+      if (v <= lim + 1e-9) s.within++; else { s.over++; s.excess += v - lim; }
+    }
+    if (s.logged) { s.avg = s.sum / s.logged; s.diff = clean(s.sum - s.allowed); }
+    return s;
+  }
 
   // ---------- weekly-goal habits ----------
   /** One weekly habit over the week starting ws (Monday): total and pace-based pct up to today. */
@@ -150,10 +173,9 @@
     var out = { total: tot, days: n, goal: c ? c.goal : 0, basis: basis, avg: n ? tot / n : 0,
       target: c ? (basis === 'avg' ? c.goal * 7 : c.goal) : 0, pace: c ? perDayGoal(c, 7) * n : 0, pct: null };
     if (c && c.goal > 0 && n > 0) {
-      if (isMax(h, c)) {
-        out.max = true;
-        if (basis === 'avg') { out.avg = logged ? tot / logged : 0; if (logged) out.pct = budget(tot, c.goal * logged); }
-        else out.pct = budget(tot, out.pace);
+      if (isMax(h, c)) {                                             // budget over the logged days only
+        out.max = true; out.avg = logged ? tot / logged : 0;
+        if (logged) out.pct = budget(tot, perDayGoal(c, 7) * logged);
       } else out.pct = Math.min(1, tot / out.pace);
     }
     return out;
@@ -184,7 +206,8 @@
         else if (el2 > 0) pct = Math.min(1, tot / (c.goal * el2));
       } else {
         target = c.goal;
-        if (el > 0) pct = mx ? budget(tot, c.goal * el / dim) : Math.min(1, tot / (c.goal * el / dim));
+        if (mx) { if (logged) pct = budget(tot, c.goal / dim * logged); }   // budget over the logged days only
+        else if (el > 0) pct = Math.min(1, tot / (c.goal * el / dim));
       }
     } else if (c.period === 'weekly') {
       target = perDayGoal(c, 7) * dim2;
@@ -445,6 +468,6 @@
     dayScore: dayScore, monthStats: monthStats, elapsedDays: elapsedDays, weekStart: weekStart, weekStats: weekStats, weeklyHabitWeek: weeklyHabitWeek,
     overallStreak: overallStreak, habitStreak: habitStreak, overallStreakAt: overallStreakAt, habitStreakAt: habitStreakAt,
     periodRange: periodRange, periodStats: periodStats, pendingToday: pendingToday, stepFor: stepFor, clean: clean,
-    val: val, met: met, fraction: fraction, isMax: isMax, hasLogs: hasLogs, startDay: startDay
+    val: val, met: met, fraction: fraction, isMax: isMax, limitPerDay: limitPerDay, limitStats: limitStats, hasLogs: hasLogs, startDay: startDay
   };
 });

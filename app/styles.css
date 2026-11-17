@@ -118,6 +118,8 @@ button:disabled { cursor: default; opacity: .4; }
 .row.num.met { border-color: color-mix(in srgb, var(--sage) 45%, transparent); }
 .row.num.over { border-color: color-mix(in srgb, var(--amber) 55%, transparent); background: linear-gradient(90deg, var(--amber-soft) var(--fill, 0%), var(--surface) var(--fill, 0%)); }
 .row.num.over .rsub { color: var(--amber-text); }
+.tone-warn { color: var(--amber-text); font-weight: 600; }
+.tone-good { color: var(--sage-text); font-weight: 600; }
 .ntop { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; }
 .ngoal { font-size: 14px; color: var(--ink-2); white-space: nowrap; padding-top: 2px; }
 .stepper { display: flex; align-items: center; gap: 8px; }

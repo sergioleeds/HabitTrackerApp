@@ -140,17 +140,19 @@ const hs = sx.habits.scr, cs = hs.versions[0];
 eq('limit met under', E.met(hs, cs, 2) ? 1 : 0, 1); eq('limit met at', E.met(hs, cs, 3) ? 1 : 0, 1);
 eq('limit not met over', E.met(hs, cs, 3.5) ? 1 : 0, 0); eq('limit not met unlogged', E.met(hs, cs, null) ? 1 : 0, 0);
 eq('limit zero is met', E.met(hs, cs, 0) ? 1 : 0, 1);
-eq('day score over', E.dayScore({ habits: { scr: hs }, logs: sx.logs }, '2026-11-10'), 0.5);
+eq('day score over is 0 (all or nothing)', E.dayScore({ habits: { scr: hs }, logs: sx.logs }, '2026-11-10'), 0);
 eq('day score unlogged', E.dayScore({ habits: { scr: hs }, logs: sx.logs }, '2026-11-12'), 0);
 w = E.weekStats(sx, '2026-11-09', '2026-11-11');
 const ws_ = w.habits.find(h => h.id === 'scr');
-eq('limit week pct (avg method ignored)', ws_.pct, (1 + 0.5 + 1) / 3); eq('limit week met days', ws_.met, 2); eq('limit dir', ws_.dir === 'max' ? 1 : 0, 1);
+eq('limit week pct = days within / days', ws_.pct, 2 / 3); eq('limit week met days', ws_.met, 2); eq('limit dir', ws_.dir === 'max' ? 1 : 0, 1);
 eq('limit streak', E.habitStreak(sx, 'scr', '2026-11-11'), 1);
-// weekly budget 21 h: 3 days elapsed -> 9 h allowed so far
-lx('2026-11-09', 'wk', 4); lx('2026-11-10', 'wk', 4);
-eq('budget within pace', E.weeklyHabitWeek(sx, sx.habits.wk, '2026-11-09', '2026-11-11').pct, 1);
-lx('2026-11-11', 'wk', 4);   // 12 h > 9 h
-eq('budget over pace', E.weeklyHabitWeek(sx, sx.habits.wk, '2026-11-09', '2026-11-11').pct, 9 / 12);
+// weekly budget 21 h = 3 h/day, judged only on the logged days
+lx('2026-11-09', 'wk', 2); lx('2026-11-10', 'wk', 3.5);   // 5.5 h in 2 logged days, 6 h allowed; Wed blank
+eq('budget within (blank day not counted as 0 h)', E.weeklyHabitWeek(sx, sx.habits.wk, '2026-11-09', '2026-11-11').pct, 1);
+lx('2026-11-11', 'wk', 6.5);   // 12 h in 3 days, 9 h allowed
+eq('budget over', E.weeklyHabitWeek(sx, sx.habits.wk, '2026-11-09', '2026-11-11').pct, 9 / 12);
+const s1 = JSON.parse(JSON.stringify(sx)); s1.logs = { '2026-11-09': { wk: 4 } };
+eq('budget: one logged day over is over (was hidden by blank days before)', E.weeklyHabitWeek(s1, s1.habits.wk, '2026-11-09', '2026-11-11').pct, 3 / 4);
 // weekly average limit: over logged days only
 lx('2026-11-09', 'av', 2); lx('2026-11-10', 'av', 5);   // avg 3.5 over 2 logged days
 r = E.weeklyHabitWeek(sx, sx.habits.av, '2026-11-09', '2026-11-11');
@@ -158,13 +160,42 @@ eq('avg limit avg', r.avg, 3.5); eq('avg limit pct', r.pct, 6 / 7);
 eq('avg limit none logged', E.weeklyHabitWeek(sx, sx.habits.av, '2026-11-02', '2026-11-11').pct, null);
 // month view of the daily limit: strict credit per day
 mh = E.monthStats(sx, '2026-11', '2026-11-11').habits.find(h => h.id === 'scr');
-eq('limit month pct', mh.pct, 2.5 / 11);
+eq('limit month pct = days within / days', mh.pct, 2 / 11);
 // pending: only asks to log today's daily value
 let px = E.pendingToday(sx, '2026-11-12');
 eq('pending limit unlogged', px.filter(p => p.id === 'scr' && p.kind === 'check').length, 1);
 eq('pending budgets never listed', px.filter(p => p.id !== 'scr').length, 0);
 lx('2026-11-12', 'scr', 5);
 eq('pending limit logged (even over)', E.pendingToday(sx, '2026-11-12').filter(p => p.id === 'scr').length, 0);
+
+// ---------- limitStats: budget on logged days, coherence with the % ----------
+{
+  const L = { habits: { scr: { id: 'scr', name: 'Pantalla', type: 'number', unit: 'h', order: 1, created: '2026-10-01',
+    versions: [{ from: '2026-10', goal: 3, period: 'daily', method: 'strict', dir: 'max', weight: 1 }] } }, logs: {} };
+  const put = (d, v) => { (L.logs[d] = L.logs[d] || {}).scr = v; };
+  put('2026-11-16', 4);                                     // Monday, 4 h, limit 3 h
+  let ls = E.limitStats(L, L.habits.scr, '2026-11-16', '2026-11-22', '2026-11-16');
+  eq('monday 4h limit 3h -> 1 h over', ls.diff, 1); eq('monday avg', ls.avg, 4); eq('monday over days', ls.over, 1); eq('monday within', ls.within, 0);
+  put('2026-11-16', 2.5);
+  ls = E.limitStats(L, L.habits.scr, '2026-11-16', '2026-11-22', '2026-11-16');
+  eq('2.5h -> 0.5 h under', ls.diff, -0.5); eq('2.5h within', ls.within, 1);
+  // Tuesday blank: does not count as 0 h within, and does not lower the average
+  ls = E.limitStats(L, L.habits.scr, '2026-11-16', '2026-11-22', '2026-11-17');
+  eq('blank day missing', ls.missing, 1); eq('blank day not within', ls.within, 1); eq('blank day days', ls.days, 2);
+  eq('blank day leaves avg alone', ls.avg, 2.5); eq('blank day leaves diff alone', ls.diff, -0.5);
+  eq('blank day: not met', E.met(L.habits.scr, L.habits.scr.versions[0], null) ? 1 : 0, 0);
+  // the user's case: two days of 4.5 h -> 0 of 2 within must be 0 %, not 67 %
+  put('2026-11-16', 4.5); put('2026-11-17', 4.5);
+  const wkL = E.weekStats(L, '2026-11-16', '2026-11-17').habits[0];
+  ls = E.limitStats(L, L.habits.scr, '2026-11-16', '2026-11-22', '2026-11-17');
+  eq('0 of 2 within', ls.within, 0); eq('% coherent with 0 of 2', wkL.pct, 0); eq('week met = within', wkL.met, ls.within);
+  eq('two days 4.5 -> 3 h over', ls.diff, 3);
+  // coherence over a month with a mix
+  put('2026-11-18', 2); put('2026-11-19', 3); put('2026-11-20', 1);   // 3 within
+  const mL = E.monthStats(L, '2026-11', '2026-11-20').habits[0];
+  ls = E.limitStats(L, L.habits.scr, '2026-11-01', '2026-11-30', '2026-11-20');
+  eq('month % = within / days', mL.pct, ls.within / ls.days); eq('month within', ls.within, 3); eq('month days', ls.days, 20);
+}
 
 console.log(`${checks} checks, ${fails} failures`);
 process.exit(fails ? 1 : 0);

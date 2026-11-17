@@ -87,6 +87,27 @@
     if (c.period === 'weekly') return t('goalWeekly', { n: g });
     return hb.type === 'number' ? t('goalDaily', { n: g }) : t('everyDay');
   }
+  /** A limit over a stretch of days, judged on the logged days only:
+   *  "media 4 h/día · límite 3 h · llevas 1 h más de las que deberías · 1 día sin anotar". */
+  function limitParts(hb, ls) {
+    var u = hb.unit ? ' ' + hb.unit : '', r = function (x) { return nf(Math.round(x * 100) / 100); };
+    if (!ls || !ls.days) return null;
+    var missing = ls.missing ? t(ls.missing === 1 ? 'limMissingOne' : 'limMissingMany', { n: ls.missing }) : '';
+    if (!ls.logged) return { text: t('limNoneLogged') + (missing ? ' · ' + missing : ''), tone: '' };
+    var head = t('limAvgLine', { a: r(ls.avg) + u, b: r(ls.limit) + u });
+    var verdict = ls.diff > 0.0001 ? t('limOverBy', { n: r(ls.diff) + u }) : ls.diff < -0.0001 ? t('limUnderBy', { n: r(-ls.diff) + u }) : t('limAtLimit');
+    return { head: head, verdict: verdict, missing: missing, tone: ls.diff > 0.0001 ? 'warn' : 'good',
+      text: head + ' · ' + verdict + (missing ? ' · ' + missing : '') };
+  }
+  function limitText(hb, ls) { var p = limitParts(hb, ls); return p ? p.text : ''; }
+  /** Same, as nodes: the verdict is coloured (amber when over, green when under). */
+  function limitNodes(hb, ls) {
+    var p = limitParts(hb, ls);
+    if (!p) return null;
+    if (!p.verdict) return p.text;
+    return [p.head + ' · ', h('span', { class: 'tone-' + p.tone, text: p.verdict }), p.missing ? ' · ' + p.missing : ''];
+  }
+  function limitDaysText(ls) { return ls && ls.days ? t('daysWithin', { a: ls.within, b: ls.days }) : ''; }
   /** Progress line for a weekly/monthly goal: "22 / 56 h" or "media 7,3 / 8 h/día". */
   function progressText(hb, c, total, avg) {
     var u = hb.unit ? ' ' + hb.unit : '', r = function (x) { return nf(Math.round(x * 100) / 100); };
@@ -205,12 +226,23 @@
     var fill = c.period === 'daily' ? Math.min(1, x / c.goal) : (bm.pct === null ? 0 : bm.pct);
     if (mx && c.period !== 'daily') fill = Math.min(1, bm.total / (isAvg(c) ? c.goal * 7 : c.goal));   // budget used
     var sub2 = '', over = false;
-    if (c.period !== 'daily') {
+    if (mx) {
+      // a limit: the day itself (daily) and what you carry in the week/month so far, on the logged days only
+      var upTo = date < today ? date : today;
+      var from = c.period === 'weekly' ? E.weekStart(date) : E.monthStart(mk);
+      var ls = E.limitStats(st, hb, from, c.period === 'weekly' ? E.addDays(from, 6) : upTo, upTo);
+      var periodTxt = c.period === 'weekly' ? t('thisWeekCap') : t('thisMonthCap');
+      if (c.period === 'daily') {
+        over = typeof v === 'number' && v > c.goal + 1e-9;
+        var dayTxt = typeof v !== 'number' ? t('notLogged') : over ? t('overBy', { n: nf(E.clean(v - c.goal)) + (hb.unit ? ' ' + hb.unit : '') }) : t('withinLimit');
+        var lp = limitParts(hb, ls);
+        sub2 = [dayTxt, lp && lp.verdict ? [' · ' + periodTxt + ': ', h('span', { class: 'tone-' + lp.tone, text: lp.verdict })] : null];
+      } else {
+        over = ls.diff > 0.0001;
+        sub2 = [periodTxt + ': ', limitNodes(hb, ls)];
+      }
+    } else if (c.period !== 'daily') {
       sub2 = progressText(hb, c, bm.total, bm.avg) + ' ' + periodWord;
-      if (mx && bm.pct !== null) { over = bm.pct < 1 - 1e-9; sub2 += ' · ' + (over ? t('overLimit') : t('withinLimit')); }
-    } else if (mx) {
-      over = typeof v === 'number' && v > c.goal + 1e-9;
-      sub2 = typeof v !== 'number' ? t('notLogged') : over ? t('overBy', { n: nf(E.clean(v - c.goal)) + (hb.unit ? ' ' + hb.unit : '') }) : t('withinLimit');
     } else if (c.method === 'average' && isCur) {
       var miss = c.goal * E.elapsedDays(mk, today) - bm.total;
       sub2 = miss > 0.0001 ? t('behind', { n: nf(Math.round(miss * 100) / 100), u: hb.unit || '' }) : t('onTrack');
@@ -220,7 +252,7 @@
     var valBtn = h('button', { class: 'val', 'aria-label': t('editValue', { name: hb.name }), onclick: function (ev) { editValue(ev.currentTarget, date, id, x); } }, mx && typeof v !== 'number' ? '–' : nf(x) + unitTxt);
     return h('div', { class: 'row num' + (E.met(hb, c, v) && c.period === 'daily' ? ' met' : '') + (mx ? ' limit' : '') + (over ? ' over' : ''), style: '--fill:' + Math.round(fill * 100) + '%' },
       h('div', { class: 'ntop' },
-        h('div', { class: 'rtext' }, h('span', { class: 'rname', text: hb.name }), sub2 ? h('span', { class: 'rsub', text: sub2 }) : null),
+        h('div', { class: 'rtext' }, h('span', { class: 'rname', text: hb.name }), sub2 ? h('span', { class: 'rsub' }, sub2) : null),
         c.period === 'daily' ? h('span', { class: 'ngoal', text: t(mx ? 'maxGoal' : 'ofGoal', { n: nf(c.goal) + unitTxt }) }) : null),
       h('div', { class: 'stepper' },
         h('button', { class: 'step', 'aria-label': t('minus', { name: hb.name }), disabled: mx ? v === 0 : x <= 0, onclick: function () { var nx = Math.max(0, E.clean(x - step)); S.setLog(date, id, mx ? nx : nx || null); } }, icon('minus')),
@@ -251,18 +283,22 @@
   }
 
   // ---------- WEEK ----------
+  /** weekStats plus, for limit habits, their logged-days summary (x.ls) used by the texts. */
+  function weekStatsL(st, ws, tday) {
+    var wk = E.weekStats(st, ws, tday);
+    wk.habits.forEach(function (x) { if (x.dir === 'max' && st.habits[x.id]) x.ls = E.limitStats(st, st.habits[x.id], wk.start, wk.end, tday); });
+    return wk;
+  }
   function weekRange(ws) {
     var we = E.addDays(ws, 6), sameMonth = ws.slice(0, 7) === we.slice(0, 7);
     return (sameMonth ? dfmt(ws, { day: 'numeric' }) : dfmt(ws, { day: 'numeric', month: 'short' })) + ' – ' + dfmt(we, { day: 'numeric', month: 'short', year: 'numeric' });
   }
   function weekHabitSub(x) {
     var u = x.unit ? ' ' + x.unit : '', r2 = function (n) { return nf(Math.round(n * 100) / 100); };
-    if (x.period === 'weekly' && x.dir === 'max') return (x.basis === 'avg' ? t('avgOf', { a: r2(x.avg), b: r2(x.goal) + u }) : r2(x.total) + ' / ' + r2(x.goal) + u) + ' · ' +
-      (x.pct === null ? t('notLogged') : x.pct >= 1 - 1e-9 ? t('withinLimit') : t('overLimit'));
+    if (x.dir === 'max' && x.ls) return limitText(x, x.ls) + (x.period === 'daily' ? ' · ' + limitDaysText(x.ls) : '');
     if (x.period === 'weekly') return (x.basis === 'avg' ? t('avgOf', { a: r2(x.avg), b: r2(x.goal) + u }) : r2(x.total) + ' / ' + r2(x.goal) + (x.unit ? u : x.type === 'check' ? ' ' + t('timesWord') : '')) + ' · ' +
       (x.pct === null ? '' : x.pct >= 1 - 1e-9 ? (x.total >= x.target - 1e-9 ? t('goalMet') : t('onPace')) : t('belowPace'));
     if (x.type === 'check') return t('daysMet', { a: x.met, b: x.days });
-    if (x.dir === 'max') return t('daysWithin', { a: x.met, b: x.days });   // a daily limit: days within it (unlogged ones are not)
     var s = r2(x.total) + ' / ' + r2(x.target) + u + ' · ' + t('avgDay', { n: r2(x.avg) + u });
     if (x.method === 'average' && x.dir !== 'max') s += ' · ' + (x.missing > 0.0001 ? t('weekMissing', { n: r2(x.missing) + u }) : t('onTrack'));
     else s += ' · ' + t('daysMet', { a: x.met, b: x.days });
@@ -270,7 +306,7 @@
   }
   function viewWeek() {
     var st = S.state(), cw = E.weekStart(today), ws = ui.week || cw, isCur = ws === cw;
-    var wk = E.weekStats(st, ws, today), prev = E.weekStats(st, E.addDays(ws, -7), today);
+    var wk = weekStatsL(st, ws, today), prev = E.weekStats(st, E.addDays(ws, -7), today);
     var root = h('div', { class: 'page' });
     root.appendChild(h('div', { class: 'datebar' },
       h('button', { class: 'iconbtn', 'aria-label': t('prevWeek'), onclick: function () { ui.week = E.addDays(ws, -7); render(); } }, icon('left')),
@@ -331,10 +367,12 @@
       var tot = x.type === 'check' && x.period === 'daily' ? nf(x.total) + ' ' + t('daysWord') : nf(x.total) + (x.unit ? ' ' + x.unit : '');
       var tgt = x.basis === 'avg' && x.period !== 'daily' ? ' · ' + t(x.period === 'weekly' ? 'goalAvgWeekly' : 'goalAvgMonthly', { n: nf(x.goal) + (x.unit ? ' ' + x.unit : '') })
         : x.period === 'monthly' ? ' / ' + nf(x.goal) : x.period === 'weekly' ? ' · ' + t('goalWeekly', { n: nf(x.goal) + (x.unit ? ' ' + x.unit : '') }) : '';
+      var lsM = x.dir === 'max' ? E.limitStats(st, st.habits[x.id], E.monthStart(mk), E.monthEnd(mk), today) : null;
       return h('div', { class: 'hline' },
         h('div', { class: 'hl-top' }, h('span', { class: 'hl-name', text: x.name }), h('span', { class: 'hl-pct', text: pc(x.pct) })),
         h('div', { class: 'bar' + (x.pct !== null && x.pct < 0.4 ? ' low' : '') }, h('i', { style: 'width:' + Math.round((x.pct || 0) * 100) + '%' })),
-        h('div', { class: 'hl-sub muted', text: tot + tgt + ' · ' + t('avgDay', { n: nf(Math.round(x.avg * 100) / 100) }) }));
+        lsM ? h('div', { class: 'hl-sub muted' }, limitNodes(st.habits[x.id], lsM), x.period === 'daily' ? ' · ' + limitDaysText(lsM) : '')
+          : h('div', { class: 'hl-sub muted', text: tot + tgt + ' · ' + t('avgDay', { n: nf(Math.round(x.avg * 100) / 100) }) }));
     })));
 
     root.appendChild(h('h2', { class: 'sect', text: t('daysTitle') }));
@@ -425,7 +463,7 @@
   function weeksChart(key, st, from, to, pick) {
     var cw = E.weekStart(today), items = [];
     for (var ws = E.weekStart(from), g = 0; ws <= to && g < 60; ws = E.addDays(ws, 7), g++) {
-      var wk = E.weekStats(st, ws, today), r = ws > today ? null : pick(wk);
+      var wk = weekStatsL(st, ws, today), r = ws > today ? null : pick(wk);
       items.push({ label: dfmt(ws, { day: 'numeric', month: 'numeric' }), value: r ? r.value : null, current: ws === cw,
         tip: t('weekOf', { d: dfmt(ws, { day: 'numeric', month: 'short' }) }) + ': ' + (r ? pc(r.value) + (r.extra || '') : t('noData')) });
     }
@@ -497,30 +535,14 @@
   }
 
   // ----- limit habits ("como máximo"): real amounts against the limit -----
-  function limitPerDay(c, d) {
-    if (c.period === 'daily' || c.basis === 'avg') return c.goal;
-    return c.period === 'weekly' ? c.goal / 7 : c.goal / E.daysInMonth(E.monthKey(d));
-  }
   /** One day of a limit habit, or null when it does not count that day (not active yet, future). */
   function limitDay(st, hb, d) {
     var mk = E.monthKey(d), c = E.cfgFor(hb, mk);
     if (!c || !E.isMax(hb, c) || d > today || +d.slice(8, 10) < E.startDay(st, hb, mk)) return null;
-    var v = E.val(st, d, hb.id), lim = limitPerDay(c, d);
+    var v = E.val(st, d, hb.id), lim = E.limitPerDay(c, d);
     return { d: d, v: typeof v === 'number' ? v : null, lim: lim, over: typeof v === 'number' && v > lim + 1e-9 };
   }
-  function limitSummary(st, hb, dates) {
-    var s = { days: 0, within: 0, over: 0, missing: 0, sum: 0, logged: 0, excess: 0, avg: null };
-    dates.forEach(function (d) {
-      var x = limitDay(st, hb, d);
-      if (!x) return;
-      s.days++;
-      if (x.v === null) { s.missing++; return; }
-      s.logged++; s.sum += x.v;
-      if (x.over) { s.over++; s.excess += x.v - x.lim; } else s.within++;
-    });
-    if (s.logged) s.avg = s.sum / s.logged;
-    return s;
-  }
+  function limitSummary(st, hb, dates) { return E.limitStats(st, hb, dates[0], dates[dates.length - 1], today); }
   function limitLegend(lim, u) {
     return h('div', { class: 'legend' }, h('span', { class: 'lg bar-lg' }, t('lgLogged')), h('span', { class: 'lg over-lg' }, t('overLimit')),
       h('span', { class: 'lg lim-lg' }, t('lgLimit', { n: nf(Math.round(lim * 100) / 100) + u })), h('span', { class: 'lg miss-lg' }, t('notLogged')));
@@ -558,7 +580,7 @@
   }
   function limitPanel(root, st, hb, c, r) {
     var u = hb.unit ? ' ' + hb.unit : '', r2 = function (n) { return nf(Math.round(n * 100) / 100); };
-    var perDay = (hb.unit || '') + '/' + t('dayShort'), limTxt = t('maxGoal', { n: r2(limitPerDay(c, r.end)) + u });
+    var perDay = (hb.unit || '') + '/' + t('dayShort'), limTxt = t('maxGoal', { n: r2(E.limitPerDay(c, r.end)) + u });
     var streak = c.period === 'daily' ? habitStreakOn(st, hb.id, r.end) : null;
     if (r.p === 'day') {
       var x = limitDay(st, hb, r.a), last = datesBetween(E.addDays(r.a, -13), r.a), sm = limitSummary(st, hb, last);
@@ -568,6 +590,7 @@
         kpi(t('kAvgLogged14'), sm.avg === null ? '–' : r2(sm.avg), null, perDay + ' · ' + limTxt),
         streak !== null ? kpi(streakLabel(r), String(streak), null, streakWord(streak).replace(String(streak), '').trim())
           : kpi(t('kMissing'), String(sm.missing), null, t('daysWord'))));
+      root.appendChild(h('p', { class: 'rangeline' }, t('last14Cap') + ': ', limitNodes(hb, sm)));
       add(root, limitChart('ld14', t('cLast14'), st, hb, last));
     } else {
       var all = datesBetween(r.d0, r.d1), sm2 = limitSummary(st, hb, all);
@@ -576,6 +599,7 @@
         kpi(t('kAvgLogged'), sm2.avg === null ? '–' : r2(sm2.avg), null, perDay + ' · ' + limTxt),
         kpi(t('kOverDays'), String(sm2.over), null, sm2.excess > 0 ? t('kOverSum', { n: r2(sm2.excess) + u }) : t('daysWord')),
         kpi(t('kMissing'), String(sm2.missing), null, t('daysWord'))));
+      if (sm2.days) root.appendChild(h('p', { class: 'rangeline' }, limitNodes(hb, sm2)));
       if (r.p === 'week') add(root, limitChart('lweek', t('daysTitle'), st, hb, all));
       else {
         if (r.p !== 'month' && r.d0 <= today) add(root, limitWeeksChart('lweeks', st, hb, r.d0, r.end));
@@ -583,10 +607,6 @@
         if (r.d0 <= today) add(root, limitChart('lmonth', t('cHabitDaily', { m: cap(mfmt(lk)) }), st, hb, datesBetween(E.monthStart(lk), E.monthEnd(lk))));
         if (r.p === 'month') add(root, limitWeeksChart('lweeks', st, hb, r.d0, r.end));
       }
-    }
-    if (c.period === 'weekly') {
-      var wr = E.weeklyHabitWeek(st, hb, E.weekStart(r.end), r.end);
-      root.appendChild(h('p', { class: 'muted rangeline', text: t('budgetWeek', { p: progressText(hb, c, wr.total, wr.avg) }) }));
     }
     root.appendChild(cfgLine(hb, c));
   }
@@ -606,6 +626,12 @@
         var why = hb.type === 'check' ? t('notDone') : typeof v !== 'number' ? t('notLogged')
           : E.isMax(hb, c) ? t('overBy', { n: r2(v - c.goal) + u }) : r2(v) + ' / ' + r2(c.goal) + u;
         out.push({ name: hb.name, why: why });
+        return;
+      }
+      if (E.isMax(hb, c)) {
+        var lsX = c.period === 'weekly' ? E.limitStats(st, hb, E.weekStart(d), d, d) : E.limitStats(st, hb, E.monthStart(mk), d, d);
+        if (lsX.logged && lsX.diff > 0.0001) out.push({ name: hb.name, why: limitText(hb, lsX) });
+        else if (!lsX.logged && lsX.days) out.push({ name: hb.name, why: t('limNoneLogged') });
         return;
       }
       var pr;
@@ -635,6 +661,10 @@
         if (a.c.period === 'daily') {
           if (+d.slice(8, 10) < E.startDay(st, a.h, mk)) return null;
           x.pct = E.fraction(a.h, a.c, E.val(st, d, a.h.id)); x.extra = habitValueText(st, a.h, d);
+        } else if (E.isMax(a.h, a.c)) {
+          var lsD = a.c.period === 'weekly' ? E.limitStats(st, a.h, E.weekStart(d), d, d) : E.limitStats(st, a.h, E.monthStart(mk), d, d);
+          x.pct = lsD.logged ? (lsD.diff > 0.0001 ? lsD.allowed / lsD.sum : 1) : null;
+          x.extra = limitText(a.h, lsD) + ' ' + (a.c.period === 'weekly' ? t('thisWeekLc') : t('thisMonth'));
         } else if (a.c.period === 'weekly') {
           var wr = E.weeklyHabitWeek(st, a.h, E.weekStart(d), d);
           x.pct = wr.pct; x.extra = progressText(a.h, a.c, wr.total, wr.avg) + ' ' + t('thisWeekLc');
@@ -676,7 +706,7 @@
 
   // ----- one week -----
   function panelWeek(root, st, r, hb) {
-    var wk = E.weekStats(st, r.d0, today), prev = E.weekStats(st, E.addDays(r.d0, -7), today), days = datesBetween(r.d0, r.d1);
+    var wk = weekStatsL(st, r.d0, today), prev = E.weekStats(st, E.addDays(r.d0, -7), today), days = datesBetween(r.d0, r.d1);
     var past12 = E.addDays(r.d0, -77);
     if (!hb) {
       if (!wk.habits.length) { root.appendChild(h('p', { class: 'muted pad', text: t('noHabitsWeek') })); return; }
@@ -748,6 +778,11 @@
     root.appendChild(heatBlock('heat', r.end, function (d) { return E.dayScore(st, d); }, function (d, v) { return pc(v); }));
 
     if (ps.habits.length) root.appendChild(habitsChart('habits', ps.habits, function (x) {
+      var hbP = st.habits[x.id];
+      if (hbP && E.isMax(hbP, E.cfgFor(hbP, E.monthKey(r.end)))) {
+        var lsP = E.limitStats(st, st.habits[x.id], r.d0, r.d1, today);
+        return limitText(hbP, lsP) + (x.period === 'daily' ? ' · ' + limitDaysText(lsP) : '');
+      }
       return t('avgDay', { n: nf(Math.round(x.avg * 100) / 100) + (x.unit ? ' ' + x.unit : '') }) + (x.period === 'daily' ? ' · ' + t('streakShort', { n: x.streak }) : '');
     }));
     add(root, top3(ps.habits));
@@ -951,7 +986,11 @@
     function seg(name, opts, locked) {
       return h('div', { class: 'seg', role: 'radiogroup' }, opts.map(function (o) {
         return h('button', { type: 'button', class: 'segb' + (f[name] === o[0] ? ' on' : ''), role: 'radio', 'aria-checked': f[name] === o[0] ? 'true' : 'false', disabled: locked, text: o[1],
-          onclick: function () { f[name] = o[0]; paint(); } });
+          onclick: function () {
+            f[name] = o[0];
+            if (name === 'dir' && hb) f.scope = f.dir !== (c.dir === 'max' ? 'max' : 'min') ? 'fix' : 'now';   // a goal that flips meaning should rewrite the past too
+            paint();
+          } });
       }));
     }
     function paint() {
